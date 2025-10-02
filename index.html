@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gen~ Resonator (Web Audio)</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Resonator Bank</h1>
+        <div class="controls">
+          <button id="startBtn">Start Audio</button>
+          <button id="randomizeBtn">Randomize branches</button>
+          <button id="resetBtn">Reset</button>
+        </div>
+      </header>
+
+      <section class="globals">
+        <div class="slider">
+          <label for="noiseLevel">
+            Noise Level <span id="noiseLevelVal">0.10</span>
+          </label>
+          <input id="noiseLevel" type="range" min="0" max="0.5" step="0.001" value="0.1" />
+        </div>
+        <div class="slider">
+          <label for="rmix">
+            Mix (rmix) <span id="rmixVal">0.50</span>
+          </label>
+          <input id="rmix" type="range" min="0" max="1" step="0.001" value="0.5" />
+        </div>
+        <div class="slider">
+          <label for="nbranches">
+            Branch count <span id="nbranchesVal">16</span>
+          </label>
+          <input id="nbranches" type="range" min="1" max="40" step="1" value="16" />
+        </div>
+        <div class="slider">
+          <label for="freqScale">
+            Freq Scale <span id="freqScaleVal">1.00</span>
+          </label>
+          <input id="freqScale" type="range" min="0.25" max="4" step="0.01" value="1" />
+        </div>
+        <div class="slider">
+          <label for="freqCenter">
+            Freq Center (Hz) <span id="freqCenterVal">0</span>
+          </label>
+          <input id="freqCenter" type="range" min="-2000" max="2000" step="1" value="0" />
+        </div>
+        <div class="slider">
+          <label for="decayScale">
+            Decay Scale <span id="decayScaleVal">1.00</span>
+          </label>
+          <input id="decayScale" type="range" min="0.25" max="4" step="0.01" value="1" />
+        </div>
+      </section>
+
+      <section>
+        <h2>Branches</h2>
+        <div id="branchesHeader" class="grid header">
+          <span>#</span>
+          <span>Freq (Hz)</span>
+          <span>Decay (ms)</span>
+          <span>Amp</span>
+          <span>Pan</span>
+        </div>
+        <div id="branches" class="grid"></div>
+      </section>
+    </div>
+
+    <script type="module" src="ui.js"></script>
+  </body>
+  </html>
+
+
