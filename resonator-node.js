@@ -21,6 +21,7 @@ export class ResonatorNode extends AudioWorkletNode {
         nbranches: 16,
         noiseLevel: 0.1,
         rmix: 0.5,
+        dryWet: 1,
         freqScale: 1,
         freqCenter: 0,
         decayScale: 1
@@ -32,6 +33,7 @@ export class ResonatorNode extends AudioWorkletNode {
   get nbranches() { return this.parameters.get('nbranches'); }
   get noiseLevel() { return this.parameters.get('noiseLevel'); }
   get rmix() { return this.parameters.get('rmix'); }
+  get dryWet() { return this.parameters.get('dryWet'); }
   get freqScale() { return this.parameters.get('freqScale'); }
   get freqCenter() { return this.parameters.get('freqCenter'); }
   get decayScale() { return this.parameters.get('decayScale'); }

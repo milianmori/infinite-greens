@@ -44,6 +44,13 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         automationRate: 'a-rate'
       },
       {
+        name: 'dryWet',
+        defaultValue: 1,
+        minValue: 0,
+        maxValue: 1,
+        automationRate: 'a-rate'
+      },
+      {
         name: 'freqScale',
         defaultValue: 1,
         minValue: 0.25,
@@ -209,6 +216,7 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     const pBranches = parameters.nbranches;
     const pNoise = parameters.noiseLevel;
     const pMix = parameters.rmix;
+    const pDryWet = parameters.dryWet;
     const pFreqScale = parameters.freqScale;
     const pFreqCenter = parameters.freqCenter;
     const pDecayScale = parameters.decayScale;
@@ -223,6 +231,7 @@ class ResonatorProcessor extends AudioWorkletProcessor {
       const noiseLevel = pNoise.length > 1 ? pNoise[i] : pNoise[0];
       const noise = (Math.random() * 2 - 1) * noiseLevel;
       const rmixTarget = pMix.length > 1 ? pMix[i] : pMix[0];
+      const dryWet = pDryWet && pDryWet.length > 1 ? pDryWet[i] : (pDryWet ? pDryWet[0] : 1);
       // smooth global rmix
       this.smoothMix = smoothToward(this.smoothMix, rmixTarget, this.alphaMix);
 
@@ -294,8 +303,9 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         r += v * this.rightPanGain[b];
       }
 
-      outL[i] = l;
-      outR[i] = r;
+      // Dry/Wet: 0 = dry noise, 1 = resonated
+      outL[i] = (1 - dryWet) * noise + dryWet * l;
+      outR[i] = (1 - dryWet) * noise + dryWet * r;
     }
 
     return true;

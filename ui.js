@@ -111,6 +111,7 @@ function updateValueLabels() {
   const get = (id) => document.getElementById(id);
   get('noiseLevelVal').textContent = Number(get('noiseLevel').value).toFixed(2);
   get('rmixVal').textContent = Number(get('rmix').value).toFixed(2);
+  if (get('dryWet')) get('dryWetVal').textContent = Number(get('dryWet').value).toFixed(2);
   get('nbranchesVal').textContent = get('nbranches').value;
   get('freqScaleVal').textContent = Number(get('freqScale').value).toFixed(2);
   get('freqCenterVal').textContent = get('freqCenter').value;
@@ -125,7 +126,7 @@ async function startAudio() {
 
   // Wire global sliders
   const $ = (id) => document.getElementById(id);
-  const sliders = ['noiseLevel', 'rmix', 'nbranches', 'freqScale', 'freqCenter', 'decayScale'];
+  const sliders = ['noiseLevel', 'rmix', 'dryWet', 'nbranches', 'freqScale', 'freqCenter', 'decayScale'];
   sliders.forEach((id) => {
     const el = $(id);
     el.addEventListener('input', () => {
@@ -135,6 +136,7 @@ async function startAudio() {
       switch (id) {
         case 'noiseLevel': node.noiseLevel.setValueAtTime(parseFloat(el.value), t); break;
         case 'rmix': node.rmix.setValueAtTime(parseFloat(el.value), t); break;
+        case 'dryWet': node.dryWet.setValueAtTime(parseFloat(el.value), t); break;
         case 'nbranches': {
           const n = parseInt(el.value, 10);
           node.nbranches.setValueAtTime(n, t);
@@ -170,6 +172,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   // Reset globals
   document.getElementById('noiseLevel').value = '0.1';
   document.getElementById('rmix').value = '0.5';
+  document.getElementById('dryWet').value = '1';
   document.getElementById('nbranches').value = '16';
   document.getElementById('freqScale').value = '1';
   document.getElementById('freqCenter').value = '0';
@@ -180,6 +183,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
     const t = context.currentTime;
     node.noiseLevel.setValueAtTime(0.1, t);
     node.rmix.setValueAtTime(0.5, t);
+    node.dryWet.setValueAtTime(1, t);
     node.nbranches.setValueAtTime(16, t);
     node.freqScale.setValueAtTime(1, t);
     node.freqCenter.setValueAtTime(0, t);
