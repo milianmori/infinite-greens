@@ -19,6 +19,12 @@ function smoothToward(current, target, alpha) {
   return current + (target - current) * alpha;
 }
 
+function quantize12TET(freqHz) {
+  if (freqHz <= 0) return 0;
+  const n = Math.round(69 + 12 * Math.log2(freqHz / 440));
+  return 440 * Math.pow(2, (n - 69) / 12);
+}
+
 class ResonatorProcessor extends AudioWorkletProcessor {
   static get parameterDescriptors() {
     return [
@@ -51,9 +57,79 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         automationRate: 'a-rate'
       },
       {
+        name: 'quantize',
+        defaultValue: 0,
+        minValue: 0,
+        maxValue: 1,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'exciterCutoff',
+        defaultValue: 4000,
+        minValue: 20,
+        maxValue: 20000,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'exciterHP',
+        defaultValue: 50,
+        minValue: 10,
+        maxValue: 2000,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'exciterBurst',
+        defaultValue: 0,
+        minValue: 0,
+        maxValue: 1,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'burstRate',
+        defaultValue: 4,
+        minValue: 0.1,
+        maxValue: 40,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'burstDurMs',
+        defaultValue: 12,
+        minValue: 1,
+        maxValue: 200,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'exciterMode', // 0=noise, 1=burst-noise, 2=impulse
+        defaultValue: 0,
+        minValue: 0,
+        maxValue: 2,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'impulseGain',
+        defaultValue: 0.3,
+        minValue: 0,
+        maxValue: 1,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'monitorExciter',
+        defaultValue: 0,
+        minValue: 0,
+        maxValue: 1,
+        automationRate: 'k-rate'
+      },
+      {
         name: 'freqScale',
         defaultValue: 1,
         minValue: 0.25,
+        maxValue: 4,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'octaves',
+        defaultValue: 0,
+        minValue: -4,
         maxValue: 4,
         automationRate: 'k-rate'
       },
@@ -122,6 +198,20 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     this.twopi = Math.PI * 2;
     this.twopiOverSR = this.twopi / sr;
     this.mssr = -1000 / sr; // used for complex pole decay mapping from ms
+
+    // 2-pole (biquad) low-pass for exciter shaping (shared for all branches)
+    this.ex_b0 = 1; this.ex_b1 = 0; this.ex_b2 = 0;
+    this.ex_a1 = 0; this.ex_a2 = 0;
+    this.ex_x1 = 0; this.ex_x2 = 0; this.ex_y1 = 0; this.ex_y2 = 0;
+
+    // 1st-order high-pass for exciter (pre-LP) to remove lows
+    this.hpf_x1 = 0; this.hpf_y1 = 0;
+    this.hpf_a = 0; // alpha computed per block
+
+    // Burst exciter state
+    this.burstPhase = 0; // cycles 0..1 at burstRate
+    this.burstOnSamples = 0; // current on-window remaining
+    this.burstEnv = 0; // simple AR env for clicks
 
     // Defaults for safety
     for (let i = 0; i < MAX_BRANCHES; i += 1) {
@@ -217,9 +307,19 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     const pNoise = parameters.noiseLevel;
     const pMix = parameters.rmix;
     const pDryWet = parameters.dryWet;
+    const pQuantize = parameters.quantize;
     const pFreqScale = parameters.freqScale;
+    const pOctaves = parameters.octaves;
     const pFreqCenter = parameters.freqCenter;
     const pDecayScale = parameters.decayScale;
+    const pExciterCut = parameters.exciterCutoff;
+    const pExciterHP = parameters.exciterHP;
+    const pExciterBurst = parameters.exciterBurst;
+    const pBurstRate = parameters.burstRate;
+    const pBurstDurMs = parameters.burstDurMs;
+    const pExciterMode = parameters.exciterMode;
+    const pImpulseGain = parameters.impulseGain;
+    const pMonitorExciter = parameters.monitorExciter;
 
     const freqScale = pFreqScale.length === 1 ? pFreqScale[0] : pFreqScale[0];
     const freqCenter = pFreqCenter.length === 1 ? pFreqCenter[0] : pFreqCenter[0];
@@ -227,9 +327,80 @@ class ResonatorProcessor extends AudioWorkletProcessor {
 
     const nBranches = clamp(pBranches[0] | 0, 0, MAX_BRANCHES);
 
+    // Compute exciter biquad LPF coefficients once per block (Butterworth, Q≈0.7071)
+    const cut = pExciterCut && (pExciterCut.length === 1 ? pExciterCut[0] : pExciterCut[0]);
+    const fc = Math.max(20, Math.min(20000, cut || 4000));
+    const w0 = 2 * Math.PI * fc / sampleRate;
+    const cosw0 = Math.cos(w0);
+    const sinw0 = Math.sin(w0);
+    const Q = 0.70710678;
+    const alpha = sinw0 / (2 * Q);
+    let b0 = (1 - cosw0) / 2;
+    let b1 = 1 - cosw0;
+    let b2 = (1 - cosw0) / 2;
+    let a0 = 1 + alpha;
+    let a1 = -2 * cosw0;
+    let a2 = 1 - alpha;
+    // normalize
+    this.ex_b0 = b0 / a0;
+    this.ex_b1 = b1 / a0;
+    this.ex_b2 = b2 / a0;
+    this.ex_a1 = a1 / a0;
+    this.ex_a2 = a2 / a0;
+
+    // Compute first-order HPF coefficient alpha from cutoff
+    const hpc = pExciterHP && (pExciterHP.length === 1 ? pExciterHP[0] : pExciterHP[0]);
+    const fhp = Math.max(10, Math.min(2000, hpc || 50));
+    const RC = 1 / (2 * Math.PI * fhp);
+    const dt = 1 / sampleRate;
+    this.hpf_a = RC / (RC + dt);
+
     for (let i = 0; i < frames; i += 1) {
       const noiseLevel = pNoise.length > 1 ? pNoise[i] : pNoise[0];
-      const noise = (Math.random() * 2 - 1) * noiseLevel;
+      const mode = pExciterMode && (pExciterMode.length === 1 ? pExciterMode[0] : pExciterMode[0]);
+      const white = (Math.random() * 2 - 1) * noiseLevel;
+      // First, high-pass to remove lows
+      const hp = this.hpf_a * (this.hpf_y1 + white - this.hpf_x1);
+      this.hpf_x1 = white; this.hpf_y1 = hp;
+      // Then biquad LP filter the exciter noise (mono)
+      let exciter = this.ex_b0 * hp + this.ex_b1 * this.ex_x1 + this.ex_b2 * this.ex_x2 - this.ex_a1 * this.ex_y1 - this.ex_a2 * this.ex_y2;
+      this.ex_x2 = this.ex_x1; this.ex_x1 = hp;
+      this.ex_y2 = this.ex_y1; this.ex_y1 = exciter;
+      // Burst gating
+      let gated = exciter;
+      const doBurst = (mode >= 1) || (pExciterBurst && (pExciterBurst.length === 1 ? pExciterBurst[0] : pExciterBurst[0]) >= 0.5);
+      if (doBurst && mode !== 2) {
+        const rate = Math.max(0.1, pBurstRate && (pBurstRate.length === 1 ? pBurstRate[0] : pBurstRate[0]) || 4);
+        const durMs = Math.max(1, pBurstDurMs && (pBurstDurMs.length === 1 ? pBurstDurMs[0] : pBurstDurMs[0]) || 12);
+        const durSamples = (durMs * 0.001) * sampleRate;
+        // advance phase
+        this.burstPhase += rate / sampleRate;
+        if (this.burstPhase >= 1) {
+          this.burstPhase -= 1;
+          this.burstOnSamples = durSamples;
+        }
+        // AR envelope for clicks
+        const attack = 0.0005 * sampleRate; // 0.5ms
+        const release = 0.002 * sampleRate; // 2ms
+        if (this.burstOnSamples > 0) {
+          this.burstEnv += (1 - this.burstEnv) * (1 / Math.max(1, attack));
+          this.burstOnSamples -= 1;
+        } else {
+          this.burstEnv += (0 - this.burstEnv) * (1 / Math.max(1, release));
+        }
+        gated = exciter * this.burstEnv;
+      } else if (mode === 2) {
+        // Impulse excitation at burst rate
+        const rate = Math.max(0.1, pBurstRate && (pBurstRate.length === 1 ? pBurstRate[0] : pBurstRate[0]) || 4);
+        const impulseGain = pImpulseGain && (pImpulseGain.length === 1 ? pImpulseGain[0] : pImpulseGain[0]) || 0.3;
+        this.burstPhase += rate / sampleRate;
+        if (this.burstPhase >= 1) {
+          this.burstPhase -= 1;
+          gated = impulseGain; // single-sample impulse
+        } else {
+          gated = 0;
+        }
+      }
       const rmixTarget = pMix.length > 1 ? pMix[i] : pMix[0];
       const dryWet = pDryWet && pDryWet.length > 1 ? pDryWet[i] : (pDryWet ? pDryWet[0] : 1);
       // smooth global rmix
@@ -267,7 +438,14 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         }
 
         // Effective global-scaling adjusted params
-        const effFreq = clamp(freqHz * freqScale + freqCenter, 25, sampleRate * 0.45);
+        // Octave transpose factor 2^oct
+        const oct = pOctaves && (pOctaves.length === 1 ? pOctaves[0] : pOctaves[0]);
+        const octMul = Math.pow(2, oct || 0);
+        let effFreq = clamp(freqHz * freqScale * octMul + freqCenter, 25, sampleRate * 0.45);
+        const doQuant = pQuantize && (pQuantize.length === 1 ? pQuantize[0] : pQuantize[0]);
+        if (doQuant >= 0.5) {
+          effFreq = quantize12TET(effFreq);
+        }
         const effDecay = Math.max(1, this.branchDecayMs[b] * decayScale);
 
         // Update coefficients if effective params changed notably
@@ -280,8 +458,8 @@ class ResonatorProcessor extends AudioWorkletProcessor {
           this.recomputeCoefficients(b, effFreq, effDecay);
         }
 
-        // Exciter -> noise
-        const x = noise;
+        // Exciter -> filtered noise
+        const x = gated;
 
         // 2-pole real resonator
         const y = this.two_a[b] * x + this.two_b[b] * this.two_y1[b] + this.two_c[b] * this.two_y2[b];
@@ -289,7 +467,7 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         this.two_y1[b] = clamp(y, -1, 1);
 
         // Complex 1-pole resonator
-        const ry = x * 0.1 + this.c_rcos[b] * this.c_ry1[b] - this.c_rsin[b] * this.c_iy1[b];
+        const ry = x * 0.02 + this.c_rcos[b] * this.c_ry1[b] - this.c_rsin[b] * this.c_iy1[b];
         const iy = this.c_rsin[b] * this.c_ry1[b] + this.c_rcos[b] * this.c_iy1[b];
         this.c_ry1[b] = clamp(ry, -1, 1);
         this.c_iy1[b] = clamp(iy, -1, 1);
@@ -303,9 +481,16 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         r += v * this.rightPanGain[b];
       }
 
-      // Dry/Wet: 0 = dry noise, 1 = resonated
-      outL[i] = (1 - dryWet) * noise + dryWet * l;
-      outR[i] = (1 - dryWet) * noise + dryWet * r;
+      // Monitor exciter only (post filter/gate), else wet-only resonator sum
+      const mon = pMonitorExciter && (pMonitorExciter.length === 1 ? pMonitorExciter[0] : pMonitorExciter[0]) >= 0.5;
+      if (mon) {
+        outL[i] = exciter;
+        outR[i] = exciter;
+      } else {
+        // Wet level only (no dry noise in output). 0 = silent, 1 = full resonator
+        outL[i] = dryWet * l;
+        outR[i] = dryWet * r;
+      }
     }
 
     return true;

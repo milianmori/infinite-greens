@@ -22,6 +22,16 @@ export class ResonatorNode extends AudioWorkletNode {
         noiseLevel: 0.1,
         rmix: 0.5,
         dryWet: 1,
+        quantize: 0,
+        exciterCutoff: 4000,
+        exciterHP: 50,
+        exciterBurst: 0,
+        burstRate: 4,
+        burstDurMs: 12,
+        exciterMode: 0,
+        impulseGain: 0.3,
+        monitorExciter: 0,
+        octaves: 0,
         freqScale: 1,
         freqCenter: 0,
         decayScale: 1
@@ -34,6 +44,16 @@ export class ResonatorNode extends AudioWorkletNode {
   get noiseLevel() { return this.parameters.get('noiseLevel'); }
   get rmix() { return this.parameters.get('rmix'); }
   get dryWet() { return this.parameters.get('dryWet'); }
+  get quantize() { return this.parameters.get('quantize'); }
+  get exciterCutoff() { return this.parameters.get('exciterCutoff'); }
+  get exciterHP() { return this.parameters.get('exciterHP'); }
+  get octaves() { return this.parameters.get('octaves'); }
+  get exciterBurst() { return this.parameters.get('exciterBurst'); }
+  get burstRate() { return this.parameters.get('burstRate'); }
+  get burstDurMs() { return this.parameters.get('burstDurMs'); }
+  get exciterMode() { return this.parameters.get('exciterMode'); }
+  get impulseGain() { return this.parameters.get('impulseGain'); }
+  get monitorExciter() { return this.parameters.get('monitorExciter'); }
   get freqScale() { return this.parameters.get('freqScale'); }
   get freqCenter() { return this.parameters.get('freqCenter'); }
   get decayScale() { return this.parameters.get('decayScale'); }

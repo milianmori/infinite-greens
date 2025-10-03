@@ -114,6 +114,11 @@ function updateValueLabels() {
   if (get('dryWet')) get('dryWetVal').textContent = Number(get('dryWet').value).toFixed(2);
   get('nbranchesVal').textContent = get('nbranches').value;
   get('freqScaleVal').textContent = Number(get('freqScale').value).toFixed(2);
+  if (get('octaves')) get('octavesVal').textContent = String(parseInt(get('octaves').value, 10));
+  if (get('burstRate')) get('burstRateVal').textContent = Number(get('burstRate').value).toFixed(2);
+  if (get('burstDurMs')) get('burstDurMsVal').textContent = get('burstDurMs').value;
+  if (get('impulseGain')) get('impulseGainVal').textContent = Number(get('impulseGain').value).toFixed(2);
+  if (get('exciterHP')) get('exciterHPVal').textContent = get('exciterHP').value;
   get('freqCenterVal').textContent = get('freqCenter').value;
   get('decayScaleVal').textContent = Number(get('decayScale').value).toFixed(2);
 }
@@ -126,7 +131,7 @@ async function startAudio() {
 
   // Wire global sliders
   const $ = (id) => document.getElementById(id);
-  const sliders = ['noiseLevel', 'rmix', 'dryWet', 'nbranches', 'freqScale', 'freqCenter', 'decayScale'];
+  const sliders = ['noiseLevel', 'rmix', 'dryWet', 'nbranches', 'freqScale', 'octaves', 'exciterCutoff', 'exciterHP', 'burstRate', 'burstDurMs', 'impulseGain', 'freqCenter', 'decayScale'];
   sliders.forEach((id) => {
     const el = $(id);
     el.addEventListener('input', () => {
@@ -144,10 +149,43 @@ async function startAudio() {
           break;
         }
         case 'freqScale': node.freqScale.setValueAtTime(parseFloat(el.value), t); break;
+        case 'octaves': node.octaves.setValueAtTime(parseInt(el.value, 10), t); break;
+        case 'exciterCutoff': node.exciterCutoff.setValueAtTime(parseFloat(el.value), t); break;
+        case 'exciterHP': node.exciterHP.setValueAtTime(parseFloat(el.value), t); break;
+        case 'burstRate': node.burstRate.setValueAtTime(parseFloat(el.value), t); break;
+        case 'burstDurMs': node.burstDurMs.setValueAtTime(parseFloat(el.value), t); break;
+        case 'impulseGain': node.impulseGain.setValueAtTime(parseFloat(el.value), t); break;
         case 'freqCenter': node.freqCenter.setValueAtTime(parseFloat(el.value), t); break;
         case 'decayScale': node.decayScale.setValueAtTime(parseFloat(el.value), t); break;
       }
     });
+  });
+
+  // Burst toggle (legacy) and mode select
+  const burst = document.getElementById('exciterBurst');
+  if (burst) {
+    burst.addEventListener('change', () => {
+      if (!node) return;
+      node.exciterBurst.setValueAtTime(burst.checked ? 1 : 0, context.currentTime);
+    });
+  }
+  const modeSel = document.getElementById('exciterMode');
+  modeSel.addEventListener('change', () => {
+    if (!node) return;
+    node.exciterMode.setValueAtTime(parseInt(modeSel.value, 10), context.currentTime);
+  });
+
+  const mon = document.getElementById('monitorExciter');
+  mon.addEventListener('change', () => {
+    if (!node) return;
+    node.monitorExciter.setValueAtTime(mon.checked ? 1 : 0, context.currentTime);
+  });
+
+  // Quantize checkbox (k-rate boolean)
+  const q = document.getElementById('quantize');
+  q.addEventListener('change', () => {
+    if (!node) return;
+    node.quantize.setValueAtTime(q.checked ? 1 : 0, context.currentTime);
   });
 
   // Initialize defaults
@@ -175,8 +213,19 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   document.getElementById('dryWet').value = '1';
   document.getElementById('nbranches').value = '16';
   document.getElementById('freqScale').value = '1';
+  document.getElementById('octaves').value = '0';
+  document.getElementById('exciterCutoff').value = '4000';
+  document.getElementById('exciterHP').value = '50';
+  const burstEl = document.getElementById('exciterBurst');
+  if (burstEl) burstEl.checked = false;
+  document.getElementById('burstRate').value = '4';
+  document.getElementById('burstDurMs').value = '12';
+  document.getElementById('exciterMode').value = '0';
+  document.getElementById('impulseGain').value = '0.3';
+  document.getElementById('monitorExciter').checked = false;
   document.getElementById('freqCenter').value = '0';
   document.getElementById('decayScale').value = '1';
+  document.getElementById('quantize').checked = false;
   updateValueLabels();
 
   if (node && context) {
@@ -186,8 +235,18 @@ document.getElementById('resetBtn').addEventListener('click', () => {
     node.dryWet.setValueAtTime(1, t);
     node.nbranches.setValueAtTime(16, t);
     node.freqScale.setValueAtTime(1, t);
+    node.octaves.setValueAtTime(0, t);
+    node.exciterCutoff.setValueAtTime(4000, t);
+    node.exciterHP.setValueAtTime(50, t);
+    if (node.exciterBurst) node.exciterBurst.setValueAtTime(0, t);
+    node.burstRate.setValueAtTime(4, t);
+    node.burstDurMs.setValueAtTime(12, t);
+    node.exciterMode.setValueAtTime(0, t);
+    node.impulseGain.setValueAtTime(0.3, t);
+    node.monitorExciter.setValueAtTime(0, t);
     node.freqCenter.setValueAtTime(0, t);
     node.decayScale.setValueAtTime(1, t);
+    node.quantize.setValueAtTime(0, t);
     setBranchesVisible(16);
   }
   resetDefaults();
