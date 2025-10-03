@@ -21,30 +21,30 @@
       <section class="globals">
         <div class="slider">
           <label for="noiseLevel">
-            Noise Level <span id="noiseLevelVal">0.00</span>
+            Noise Level <span id="noiseLevelVal">0.03</span>
           </label>
-          <input id="noiseLevel" type="range" min="0" max="0.5" step="0.001" value="0" />
+          <input id="noiseLevel" type="range" min="0" max="0.5" step="0.001" value="0.03" />
         </div>
         <div class="slider">
           <label for="noiseType">Noise Type</label>
           <select id="noiseType">
             <option value="0">White</option>
-            <option value="1">Pink</option>
+            <option value="1" selected>Pink</option>
             <option value="2">Brown</option>
             <option value="3">Blue</option>
           </select>
         </div>
         <div class="slider">
           <label for="lfoEnabled">LFO Enable</label>
-          <input id="lfoEnabled" type="checkbox" />
+          <input id="lfoEnabled" type="checkbox" checked />
         </div>
         <div class="slider">
-          <label for="lfoRate">LFO Rate (Hz) <span id="lfoRateVal">2.00</span></label>
-          <input id="lfoRate" type="range" min="0.1" max="20" step="0.01" value="2" />
+          <label for="lfoRate">LFO Rate (Hz) <span id="lfoRateVal">0.10</span></label>
+          <input id="lfoRate" type="range" min="0.1" max="20" step="0.01" value="0.10" />
         </div>
         <div class="slider">
-          <label for="lfoDepth">LFO Depth <span id="lfoDepthVal">0.50</span></label>
-          <input id="lfoDepth" type="range" min="0" max="1" step="0.01" value="0.5" />
+          <label for="lfoDepth">LFO Depth <span id="lfoDepthVal">0.7</span></label>
+          <input id="lfoDepth" type="range" min="0" max="1" step="0.01" value="0.7" />
         </div>
         <div class="slider">
           <label for="lfoWave">LFO Wave</label>
@@ -69,9 +69,9 @@
         </div>
         <div class="slider">
           <label for="exciterBandQ">
-            Exciter Band Q <span id="exciterBandQVal">25</span>
+            Exciter Band Q <span id="exciterBandQVal">30</span>
           </label>
-          <input id="exciterBandQ" type="range" min="0.5" max="80" step="0.5" value="25" />
+          <input id="exciterBandQ" type="range" min="0.5" max="80" step="0.5" value="30" />
         </div>
         <div class="slider">
           <label for="monitorExciter">Monitor Exciter Only</label>
@@ -85,28 +85,28 @@
           <input id="rainEnabled" type="checkbox" checked />
         </div>
         <div class="slider">
-          <label for="rainGain">Rain Gain <span id="rainGainVal">0.85</span></label>
-          <input id="rainGain" type="range" min="0" max="1" step="0.01" value="0.85" />
+          <label for="rainGain">Rain Gain <span id="rainGainVal">0.62</span></label>
+          <input id="rainGain" type="range" min="0" max="1" step="0.01" value="0.62" />
         </div>
         <div class="slider">
-          <label for="rainRate">Rain Rate (Hz) <span id="rainRateVal">0.81</span></label>
-          <input id="rainRate" type="range" min="0.1" max="40" step="0.01" value="0.81" />
+          <label for="rainRate">Rain Rate (Hz) <span id="rainRateVal">0.83</span></label>
+          <input id="rainRate" type="range" min="0" max="1" step="0.001" value="0.353" />
         </div>
         <div class="slider">
-          <label for="rainDurMs">Drop Duration (ms) <span id="rainDurMsVal">8</span></label>
-          <input id="rainDurMs" type="range" min="1" max="200" step="1" value="8" />
+          <label for="rainDurMs">Drop Duration (ms) <span id="rainDurMsVal">61</span></label>
+          <input id="rainDurMs" type="range" min="1" max="200" step="1" value="61" />
         </div>
         <div class="slider">
-          <label for="rainSpread">Spread <span id="rainSpreadVal">0.69</span></label>
-          <input id="rainSpread" type="range" min="0" max="1" step="0.01" value="0.69" />
+          <label for="rainSpread">Spread <span id="rainSpreadVal">0.71</span></label>
+          <input id="rainSpread" type="range" min="0" max="1" step="0.01" value="0.71" />
         </div>
         <div class="slider">
-          <label for="rainCenter">Center <span id="rainCenterVal">0.55</span></label>
-          <input id="rainCenter" type="range" min="0" max="1" step="0.001" value="0.55" />
+          <label for="rainCenter">Center <span id="rainCenterVal">0.49</span></label>
+          <input id="rainCenter" type="range" min="0" max="1" step="0.001" value="0.49" />
         </div>
         <div class="slider">
-          <label for="rainLimbs">N Limbs <span id="rainLimbsVal">9</span></label>
-          <input id="rainLimbs" type="range" min="1" max="10" step="1" value="9" />
+          <label for="rainLimbs">N Limbs <span id="rainLimbsVal">10</span></label>
+          <input id="rainLimbs" type="range" min="1" max="10" step="1" value="10" />
         </div>
       </section>
     </div>

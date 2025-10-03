@@ -435,7 +435,7 @@ document.getElementById('randomizeBtn').addEventListener('click', () => {
 });
 document.getElementById('resetBtn').addEventListener('click', () => {
   // Reset globals
-  if (document.getElementById('noiseLevel')) document.getElementById('noiseLevel').value = '0';
+  if (document.getElementById('noiseLevel')) document.getElementById('noiseLevel').value = '0.03';
   document.getElementById('rmix').value = '1';
   document.getElementById('nbranches').value = '4';
   document.getElementById('freqScale').value = '1';
@@ -443,9 +443,9 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   if (document.getElementById('exciterCutoff')) document.getElementById('exciterCutoff').value = '4000';
   if (document.getElementById('exciterHP')) document.getElementById('exciterHP').value = '50';
   if (document.getElementById('noiseType')) document.getElementById('noiseType').value = '0';
-  if (document.getElementById('lfoEnabled')) document.getElementById('lfoEnabled').checked = false;
-  if (document.getElementById('lfoRate')) document.getElementById('lfoRate').value = '2';
-  if (document.getElementById('lfoDepth')) document.getElementById('lfoDepth').value = '0.5';
+  if (document.getElementById('lfoEnabled')) document.getElementById('lfoEnabled').checked = true;
+  if (document.getElementById('lfoRate')) document.getElementById('lfoRate').value = '0.10';
+  if (document.getElementById('lfoDepth')) document.getElementById('lfoDepth').value = '0.56';
   if (document.getElementById('lfoWave')) document.getElementById('lfoWave').value = '0';
   if (document.getElementById('rainEnabled')) document.getElementById('rainEnabled').checked = true;
   if (document.getElementById('rainRate')) document.getElementById('rainRate').value = '0.81';
@@ -460,7 +460,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   if (document.getElementById('groupEnabled')) document.getElementById('groupEnabled').checked = false;
   if (document.getElementById('groupSplit')) document.getElementById('groupSplit').value = '0';
   const qEl = document.getElementById('exciterBandQ');
-  if (qEl) qEl.value = '25';
+  if (qEl) qEl.value = '30';
   // Reset scale selectors
   if (document.getElementById('scaleRoot')) document.getElementById('scaleRoot').value = 'A';
   if (document.getElementById('scaleName')) document.getElementById('scaleName').value = 'off';
@@ -468,11 +468,11 @@ document.getElementById('resetBtn').addEventListener('click', () => {
 
   if (node && context) {
     const t = context.currentTime;
-    node.noiseLevel.setValueAtTime(0, t);
-      if (node.noiseType) node.noiseType.setValueAtTime(0, t);
-      if (node.lfoEnabled) node.lfoEnabled.setValueAtTime(0, t);
-      if (node.lfoRate) node.lfoRate.setValueAtTime(2, t);
-      if (node.lfoDepth) node.lfoDepth.setValueAtTime(0.5, t);
+    node.noiseLevel.setValueAtTime(0.03, t);
+      if (node.noiseType) node.noiseType.setValueAtTime(1, t);
+      if (node.lfoEnabled) node.lfoEnabled.setValueAtTime(1, t);
+      if (node.lfoRate) node.lfoRate.setValueAtTime(0.1, t);
+      if (node.lfoDepth) node.lfoDepth.setValueAtTime(0.56, t);
       if (node.lfoWave) node.lfoWave.setValueAtTime(0, t);
     node.rmix.setValueAtTime(1, t);
     node.nbranches.setValueAtTime(4, t);
@@ -481,12 +481,12 @@ document.getElementById('resetBtn').addEventListener('click', () => {
     if (node.exciterCutoff) node.exciterCutoff.setValueAtTime(4000, t);
     if (node.exciterHP) node.exciterHP.setValueAtTime(50, t);
     if (node.rainEnabled) node.rainEnabled.setValueAtTime(1, t);
-    if (node.rainRate) node.rainRate.setValueAtTime(0.81, t);
-    if (node.rainDurMs) node.rainDurMs.setValueAtTime(8, t);
-    if (node.rainGain) node.rainGain.setValueAtTime(0.85, t);
-    if (node.rainSpread) node.rainSpread.setValueAtTime(0.69, t);
-    if (node.rainCenter) node.rainCenter.setValueAtTime(0.55, t);
-    if (node.rainLimbs) node.rainLimbs.setValueAtTime(9, t);
+    if (node.rainRate) node.rainRate.setValueAtTime(0.83, t);
+    if (node.rainDurMs) node.rainDurMs.setValueAtTime(61, t);
+    if (node.rainGain) node.rainGain.setValueAtTime(0.62, t);
+    if (node.rainSpread) node.rainSpread.setValueAtTime(0.71, t);
+    if (node.rainCenter) node.rainCenter.setValueAtTime(0.49, t);
+    if (node.rainLimbs) node.rainLimbs.setValueAtTime(10, t);
     if (node.monitorExciter) node.monitorExciter.setValueAtTime(0, t);
     node.freqCenter.setValueAtTime(0, t);
     node.decayScale.setValueAtTime(1, t);

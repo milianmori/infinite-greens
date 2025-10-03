@@ -288,7 +288,12 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     // Raindrop state
     this.rainEnv = new Float32Array(MAX_BRANCHES); // per-branch short env
     this.MAX_LIMBS = 16;
-    this.rainPhase = new Float32Array(this.MAX_LIMBS); // per-limb rate phase 0..1
+    // Per-limb next trigger in samples (sample & hold style inter-arrival)
+    this.rainNextSamples = new Int32Array(this.MAX_LIMBS);
+    // Seed next trigger intervals with an exponential draw using a nominal rate
+    for (let li = 0; li < this.MAX_LIMBS; li += 1) {
+      this.rainNextSamples[li] = 1; // initialize to trigger soon; will be resampled on first process block
+    }
 
     // LFO and noise shaping state
     this.lfoPhase = 0;
@@ -593,6 +598,7 @@ class ResonatorProcessor extends AudioWorkletProcessor {
       this.ex_y2 = this.ex_y1; this.ex_y1 = exciterNoise;
 
       // Raindrop updates (per sample)
+      // Read current rainRate once per sample (k-rate param so typically constant across block)
       const rainRate = Math.max(0.1, pRainRate && (pRainRate.length === 1 ? pRainRate[0] : pRainRate[0]) || 6);
       const rainDurMs = Math.max(1, pRainDurMs && (pRainDurMs.length === 1 ? pRainDurMs[0] : pRainDurMs[0]) || 8);
       const rainGain = Math.max(0, pRainGain && (pRainGain.length === 1 ? pRainGain[0] : pRainGain[0]) || 0.3);
@@ -602,12 +608,12 @@ class ResonatorProcessor extends AudioWorkletProcessor {
 
       // per-sample decay coefficient for rain envelopes
       const rainDecay = Math.exp(-1 / Math.max(1, (rainDurMs * 0.001) * sampleRate));
-      // trigger per active limb
+      // trigger per active limb using Poisson process (sample & hold inter-arrival)
       if (rainEnabledBlock && limbs > 0 && nBranches > 0) {
         for (let li = 0; li < limbs; li += 1) {
-          this.rainPhase[li] += rainRate / sampleRate;
-          if (this.rainPhase[li] >= 1) {
-            this.rainPhase[li] -= 1;
+          // Count down to next trigger in samples
+          let next = this.rainNextSamples[li] | 0;
+          if (next <= 0) {
             // choose branch by gaussian around center
             const centerIdx = Math.round(rainCenter * (nBranches - 1));
             const sigma = Math.max(0.5, rainSpread * (nBranches - 1) * 0.5);
@@ -628,6 +634,13 @@ class ResonatorProcessor extends AudioWorkletProcessor {
             // add a small amplitude impulse to envelope
             const amp = 1;
             this.rainEnv[idx] += amp;
+            // Resample next inter-arrival from exponential distribution with mean 1/rainRate
+            const u = this.nextRand() || 1e-12;
+            const intervalSec = -Math.log(u) / rainRate;
+            const samples = Math.max(1, Math.round(intervalSec * sampleRate));
+            this.rainNextSamples[li] = samples;
+          } else {
+            this.rainNextSamples[li] = next - 1;
           }
         }
       }

@@ -19,11 +19,11 @@ export class ResonatorNode extends AudioWorkletNode {
       outputChannelCount: [2],
       parameterData: {
         nbranches: 4,
-        noiseLevel: 0,
-        noiseType: 0,
-        lfoEnabled: 0,
-        lfoRate: 2,
-        lfoDepth: 0.5,
+        noiseLevel: 0.03,
+        noiseType: 1,
+        lfoEnabled: 1,
+        lfoRate: 0.1,
+        lfoDepth: 0.7,
         lfoWave: 0,
         rmix: 1,
         dryWet: 1,
@@ -32,12 +32,12 @@ export class ResonatorNode extends AudioWorkletNode {
         exciterHP: 50,
         // Raindrop exciter defaults
         rainEnabled: 1,
-        rainGain: 0.85,
-        rainRate: 0.81,
-        rainDurMs: 8,
-        rainSpread: 0.69,
-        rainCenter: 0.55,
-        rainLimbs: 9,
+        rainGain: 0.62,
+        rainRate: 0.83,
+        rainDurMs: 61,
+        rainSpread: 0.71,
+        rainCenter: 0.49,
+        rainLimbs: 10,
         monitorExciter: 0,
         groupEnabled: 0,
         groupSplit: 0,
@@ -45,7 +45,7 @@ export class ResonatorNode extends AudioWorkletNode {
         freqScale: 1,
         freqCenter: 0,
         decayScale: 1
-        , exciterBandQ: 25
+        , exciterBandQ: 30
       }
     });
   }
