@@ -252,6 +252,10 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     // Cache previous band Q to force recompute on change
     this.prevBandQ = 25;
 
+    // Current scale state
+    this.scaleConfig = { name: 'off', root: 'A' };
+    this.scalePitchClasses = null; // array of allowed semitone classes [0..11]
+
     this.port.onmessage = (event) => {
       const data = event.data || {};
       if (data.type === 'setBranchParams') {
@@ -283,6 +287,11 @@ class ResonatorProcessor extends AudioWorkletProcessor {
           this.cachedEffFreq[i] = 0;
           this.cachedEffDecay[i] = 0;
         }
+      } else if (data.type === 'setScale') {
+        const name = (data.name || 'off');
+        const root = (data.root || 'A');
+        this.scaleConfig = { name, root };
+        this.scalePitchClasses = this.computePitchClasses(name, root);
       }
     };
   }
@@ -496,7 +505,12 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         let effFreq = clamp(freqHz * freqScale * octMul + freqCenter, 25, sampleRate * 0.45);
         const doQuant = pQuantize && (pQuantize.length === 1 ? pQuantize[0] : pQuantize[0]);
         if (doQuant >= 0.5) {
-          effFreq = quantize12TET(effFreq);
+          const pcs = this.scalePitchClasses;
+          if (!pcs || pcs.length === 0) {
+            effFreq = quantize12TET(effFreq);
+          } else {
+            effFreq = this.quantizeToScale(effFreq, pcs);
+          }
         }
         const effDecay = Math.max(1, this.branchDecayMs[b] * decayScale);
 
@@ -564,6 +578,79 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     if (bandQChanged) this.prevBandQ = bandQClamped;
 
     return true;
+  }
+
+  // ---- Scale helpers ----
+  noteNameToClass(name) {
+    // Map C..B with sharps only
+    const map = {
+      'C': 0, 'C#': 1, 'Db': 1,
+      'D': 2, 'D#': 3, 'Eb': 3,
+      'E': 4, 'Fb': 4, 'E#': 5, // tolerate enharmonics
+      'F': 5, 'F#': 6, 'Gb': 6,
+      'G': 7, 'G#': 8, 'Ab': 8,
+      'A': 9, 'A#': 10, 'Bb': 10,
+      'B': 11, 'Cb': 11, 'B#': 0
+    };
+    return map[name] != null ? map[name] : 9; // default A
+  }
+
+  computePitchClasses(scaleName, rootName) {
+    if (!scaleName || scaleName === 'off') return null;
+    const root = this.noteNameToClass(rootName || 'A');
+    // Define scale intervals in semitones from root
+    const scales = {
+      chromatic: [0,1,2,3,4,5,6,7,8,9,10,11],
+      major: [0,2,4,5,7,9,11],
+      minor: [0,2,3,5,7,8,10], // natural minor
+      harmonicMinor: [0,2,3,5,7,8,11],
+      melodicMinor: [0,2,3,5,7,9,11], // ascending
+      dorian: [0,2,3,5,7,9,10],
+      phrygian: [0,1,3,5,7,8,10],
+      lydian: [0,2,4,6,7,9,11],
+      mixolydian: [0,2,4,5,7,9,10],
+      locrian: [0,1,3,5,6,8,10],
+      pentatonicMajor: [0,2,4,7,9],
+      pentatonicMinor: [0,3,5,7,10],
+      blues: [0,3,5,6,7,10],
+      wholeTone: [0,2,4,6,8,10],
+      octatonic12: [0,1,3,4,6,7,9,10], // H-W
+      octatonic21: [0,2,3,5,6,8,9,11]  // W-H
+    };
+    const base = scales[scaleName] || null;
+    if (!base) return null;
+    const pcs = base.map(iv => (root + iv) % 12);
+    // ensure uniqueness and sorted
+    const uniq = Array.from(new Set(pcs)).sort((a,b) => a - b);
+    return uniq;
+  }
+
+  quantizeToScale(freqHz, pitchClasses) {
+    if (!(freqHz > 0)) return 0;
+    // Convert to MIDI, then to nearest pitch class over all octaves
+    const midi = 69 + 12 * Math.log2(freqHz / 440);
+    const roundMidi = Math.round(midi);
+    const pc = ((roundMidi % 12) + 12) % 12;
+    // If already on allowed pc, return 12-TET rounded
+    if (pitchClasses.indexOf(pc) !== -1) {
+      return 440 * Math.pow(2, (roundMidi - 69) / 12);
+    }
+    // Search nearest allowed pitch in semitone distance
+    let bestMidi = roundMidi;
+    let bestDist = Infinity;
+    for (let d = 0; d <= 12; d += 1) {
+      const up = roundMidi + d;
+      const down = roundMidi - d;
+      const upPc = ((up % 12) + 12) % 12;
+      const downPc = ((down % 12) + 12) % 12;
+      if (pitchClasses.indexOf(upPc) !== -1) {
+        bestMidi = up; bestDist = d; break;
+      }
+      if (pitchClasses.indexOf(downPc) !== -1) {
+        bestMidi = down; bestDist = d; break;
+      }
+    }
+    return 440 * Math.pow(2, (bestMidi - 69) / 12);
   }
 }
 

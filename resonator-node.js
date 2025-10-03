@@ -18,9 +18,9 @@ export class ResonatorNode extends AudioWorkletNode {
       numberOfOutputs: 1,
       outputChannelCount: [2],
       parameterData: {
-        nbranches: 16,
+        nbranches: 4,
         noiseLevel: 0.1,
-        rmix: 0.5,
+        rmix: 1,
         dryWet: 1,
         quantize: 0,
         exciterCutoff: 4000,
@@ -72,6 +72,11 @@ export class ResonatorNode extends AudioWorkletNode {
 
   setAllBranches(branches) {
     this.port.postMessage({ type: 'setAllBranches', branches });
+  }
+
+  // Send scale selection to the processor
+  setScale({ name, root }) {
+    this.port.postMessage({ type: 'setScale', name, root });
   }
 }
 
