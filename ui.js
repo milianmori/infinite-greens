@@ -276,6 +276,7 @@ function updateValueLabels() {
   if (get('exciterHP')) get('exciterHPVal').textContent = get('exciterHP').value;
   get('freqCenterVal').textContent = get('freqCenter').value;
   get('decayScaleVal').textContent = Number(get('decayScale').value).toFixed(2);
+  if (get('groupSplit')) get('groupSplitVal').textContent = String(parseInt(get('groupSplit').value, 10));
   if (get('exciterBandQ')) get('exciterBandQVal').textContent = get('exciterBandQ').value;
   if (get('rainRate')) get('rainRateVal').textContent = Number(get('rainRate').value).toFixed(2);
   if (get('rainDurMs')) get('rainDurMsVal').textContent = get('rainDurMs').value;
@@ -287,13 +288,17 @@ function updateValueLabels() {
 
 async function startAudio() {
   if (context) return;
-  context = new (window.AudioContext || window.webkitAudioContext)();
+  context = new (window.AudioContext || window.webkitAudioContext)({
+    sampleRate: 44100,
+    latencyHint: 'playback'
+  });
   node = await ResonatorNode.create(context);
   node.connect(context.destination);
+  console.info('AudioContext started', { sampleRate: context.sampleRate, baseLatency: context.baseLatency });
 
   // Wire global sliders
   const $ = (id) => document.getElementById(id);
-  const sliders = ['rmix', 'nbranches', 'freqScale', 'octaves', 'freqCenter', 'decayScale'];
+  const sliders = ['rmix', 'nbranches', 'freqScale', 'octaves', 'freqCenter', 'decayScale', 'groupSplit'];
   // Exciter controls may live in a separate tab now; guard for missing elements
   const optional = ['noiseType', 'lfoRate', 'lfoDepth', 'exciterCutoff', 'exciterHP', 'exciterBandQ', 'rainRate', 'rainDurMs', 'rainGain', 'rainSpread', 'rainCenter', 'rainLimbs'];
   for (const id of optional) { if (document.getElementById(id)) sliders.push(id); }
@@ -312,6 +317,12 @@ async function startAudio() {
           const n = parseInt(el.value, 10);
           node.nbranches.setValueAtTime(n, t);
           setBranchesVisible(n);
+          // Clamp groupSplit slider to n
+          const gs = document.getElementById('groupSplit');
+          if (gs) {
+            gs.max = String(n);
+            if (parseInt(gs.value, 10) > n) gs.value = String(n);
+          }
           break;
         }
         case 'freqScale': node.freqScale.setValueAtTime(parseFloat(el.value), t); break;
@@ -324,9 +335,17 @@ async function startAudio() {
         case 'freqCenter': node.freqCenter.setValueAtTime(parseFloat(el.value), t); break;
         case 'decayScale': node.decayScale.setValueAtTime(parseFloat(el.value), t); break;
         case 'exciterBandQ': node.exciterBandQ.setValueAtTime(parseFloat(el.value), t); break;
+        case 'groupSplit': node.groupSplit.setValueAtTime(parseInt(el.value, 10), t); break;
       }
     });
   });
+  const groupEnableEl = document.getElementById('groupEnabled');
+  if (groupEnableEl) {
+    groupEnableEl.addEventListener('change', () => {
+      if (!node) return;
+      node.groupEnabled.setValueAtTime(groupEnableEl.checked ? 1 : 0, context.currentTime);
+    });
+  }
 
   // Raindrop enable checkbox
   const rainEnableEl = document.getElementById('rainEnabled');
@@ -416,7 +435,7 @@ document.getElementById('randomizeBtn').addEventListener('click', () => {
 });
 document.getElementById('resetBtn').addEventListener('click', () => {
   // Reset globals
-  if (document.getElementById('noiseLevel')) document.getElementById('noiseLevel').value = '0.1';
+  if (document.getElementById('noiseLevel')) document.getElementById('noiseLevel').value = '0';
   document.getElementById('rmix').value = '1';
   document.getElementById('nbranches').value = '4';
   document.getElementById('freqScale').value = '1';
@@ -428,16 +447,18 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   if (document.getElementById('lfoRate')) document.getElementById('lfoRate').value = '2';
   if (document.getElementById('lfoDepth')) document.getElementById('lfoDepth').value = '0.5';
   if (document.getElementById('lfoWave')) document.getElementById('lfoWave').value = '0';
-  if (document.getElementById('rainEnabled')) document.getElementById('rainEnabled').checked = false;
-  if (document.getElementById('rainRate')) document.getElementById('rainRate').value = '6';
+  if (document.getElementById('rainEnabled')) document.getElementById('rainEnabled').checked = true;
+  if (document.getElementById('rainRate')) document.getElementById('rainRate').value = '0.81';
   if (document.getElementById('rainDurMs')) document.getElementById('rainDurMs').value = '8';
-  if (document.getElementById('rainGain')) document.getElementById('rainGain').value = '0.3';
-  if (document.getElementById('rainSpread')) document.getElementById('rainSpread').value = '0.4';
-  if (document.getElementById('rainCenter')) document.getElementById('rainCenter').value = '0.5';
-  if (document.getElementById('rainLimbs')) document.getElementById('rainLimbs').value = '5';
+  if (document.getElementById('rainGain')) document.getElementById('rainGain').value = '0.85';
+  if (document.getElementById('rainSpread')) document.getElementById('rainSpread').value = '0.69';
+  if (document.getElementById('rainCenter')) document.getElementById('rainCenter').value = '0.55';
+  if (document.getElementById('rainLimbs')) document.getElementById('rainLimbs').value = '9';
   if (document.getElementById('monitorExciter')) document.getElementById('monitorExciter').checked = false;
   document.getElementById('freqCenter').value = '0';
   document.getElementById('decayScale').value = '1';
+  if (document.getElementById('groupEnabled')) document.getElementById('groupEnabled').checked = false;
+  if (document.getElementById('groupSplit')) document.getElementById('groupSplit').value = '0';
   const qEl = document.getElementById('exciterBandQ');
   if (qEl) qEl.value = '25';
   // Reset scale selectors
@@ -447,7 +468,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
 
   if (node && context) {
     const t = context.currentTime;
-    node.noiseLevel.setValueAtTime(0.1, t);
+    node.noiseLevel.setValueAtTime(0, t);
       if (node.noiseType) node.noiseType.setValueAtTime(0, t);
       if (node.lfoEnabled) node.lfoEnabled.setValueAtTime(0, t);
       if (node.lfoRate) node.lfoRate.setValueAtTime(2, t);
@@ -459,16 +480,18 @@ document.getElementById('resetBtn').addEventListener('click', () => {
     node.octaves.setValueAtTime(0, t);
     if (node.exciterCutoff) node.exciterCutoff.setValueAtTime(4000, t);
     if (node.exciterHP) node.exciterHP.setValueAtTime(50, t);
-    if (node.rainEnabled) node.rainEnabled.setValueAtTime(0, t);
-    if (node.rainRate) node.rainRate.setValueAtTime(6, t);
+    if (node.rainEnabled) node.rainEnabled.setValueAtTime(1, t);
+    if (node.rainRate) node.rainRate.setValueAtTime(0.81, t);
     if (node.rainDurMs) node.rainDurMs.setValueAtTime(8, t);
-    if (node.rainGain) node.rainGain.setValueAtTime(0.3, t);
-    if (node.rainSpread) node.rainSpread.setValueAtTime(0.4, t);
-    if (node.rainCenter) node.rainCenter.setValueAtTime(0.5, t);
-    if (node.rainLimbs) node.rainLimbs.setValueAtTime(5, t);
+    if (node.rainGain) node.rainGain.setValueAtTime(0.85, t);
+    if (node.rainSpread) node.rainSpread.setValueAtTime(0.69, t);
+    if (node.rainCenter) node.rainCenter.setValueAtTime(0.55, t);
+    if (node.rainLimbs) node.rainLimbs.setValueAtTime(9, t);
     if (node.monitorExciter) node.monitorExciter.setValueAtTime(0, t);
     node.freqCenter.setValueAtTime(0, t);
     node.decayScale.setValueAtTime(1, t);
+    if (node.groupEnabled) node.groupEnabled.setValueAtTime(0, t);
+    if (node.groupSplit) node.groupSplit.setValueAtTime(0, t);
     node.quantize.setValueAtTime(0, t);
     if (node.setScale) node.setScale({ name: 'off', root: 'A' });
     setBranchesVisible(4);

@@ -106,6 +106,20 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         maxValue: 2000,
         automationRate: 'k-rate'
       },
+      {
+        name: 'groupEnabled', // 0/1: if enabled, split branches into two groups
+        defaultValue: 0,
+        minValue: 0,
+        maxValue: 1,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'groupSplit', // integer count of branches in group 1
+        defaultValue: 0,
+        minValue: 0,
+        maxValue: MAX_BRANCHES,
+        automationRate: 'k-rate'
+      },
       // Raindrop exciter parameters
       {
         name: 'rainEnabled',
@@ -441,6 +455,8 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     const pDecayScale = parameters.decayScale;
     const pExciterCut = parameters.exciterCutoff;
     const pExciterHP = parameters.exciterHP;
+    const pGroupEnabled = parameters.groupEnabled;
+    const pGroupSplit = parameters.groupSplit;
     const pNoiseType = parameters.noiseType;
     const pLfoEnabled = parameters.lfoEnabled;
     const pLfoRate = parameters.lfoRate;
@@ -502,6 +518,9 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     const lfoWaveBlock = pLfoWave && (pLfoWave.length === 1 ? pLfoWave[0] : pLfoWave[0]) | 0;
 
     const rainEnabledBlock = pRainEnabled && (pRainEnabled.length === 1 ? pRainEnabled[0] : pRainEnabled[0]) >= 0.5;
+    const groupEnabledBlock = pGroupEnabled && (pGroupEnabled.length === 1 ? pGroupEnabled[0] : pGroupEnabled[0]) >= 0.5;
+    const rawSplit = (pGroupSplit && (pGroupSplit.length === 1 ? pGroupSplit[0] : pGroupSplit[0]));
+    const groupSplitCount = Math.max(0, Math.min(MAX_BRANCHES, Math.round(rawSplit === undefined ? 0 : rawSplit))) | 0;
     const monitorExciterBlock = pMonitorExciter && (pMonitorExciter.length === 1 ? pMonitorExciter[0] : pMonitorExciter[0]) >= 0.5;
 
     for (let i = 0; i < frames; i += 1) {
@@ -597,6 +616,15 @@ class ResonatorProcessor extends AudioWorkletProcessor {
             const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2); // N(0,1)
             let idx = Math.round(centerIdx + sigma * z);
             if (idx < 0) idx = 0; else if (idx >= nBranches) idx = nBranches - 1;
+            // If grouping is enabled, only apply raindrops to group 2 branches
+            if (groupEnabledBlock) {
+              const splitIdx = Math.max(0, Math.min(nBranches, groupSplitCount));
+              if (idx < splitIdx) {
+                // redirect to nearest group 2 index
+                idx = splitIdx + ((idx % Math.max(1, nBranches - splitIdx)));
+                if (idx >= nBranches) idx = nBranches - 1;
+              }
+            }
             // add a small amplitude impulse to envelope
             const amp = 1;
             this.rainEnv[idx] += amp;
@@ -615,6 +643,7 @@ class ResonatorProcessor extends AudioWorkletProcessor {
       let r = 0;
       let monSum = 0;
 
+      const splitIdxBlock = groupEnabledBlock ? Math.max(0, Math.min(nBranches, groupSplitCount)) : 0;
       for (let b = 0; b < nBranches; b += 1) {
         // smooth per-branch params
         const freqTarget = this.branchFreqHz[b];
@@ -680,7 +709,15 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         // Exciter -> filtered noise
         // Per-branch bandpass around the branch frequency
         const rainInput = rainGain * this.rainEnv[b];
-        const branchIn = exciterNoise + rainInput;
+        let noiseIn = exciterNoise;
+        let rainIn = rainInput;
+        if (groupEnabledBlock) {
+          const inGroup1 = (b < splitIdxBlock);
+          // Group 1: noise only; Group 2: raindrops only
+          noiseIn = inGroup1 ? exciterNoise : 0;
+          rainIn = inGroup1 ? 0 : rainInput;
+        }
+        const branchIn = noiseIn + rainIn;
         const xbp = this.bp_b0[b] * branchIn + this.bp_b1[b] * this.bp_x1[b] + this.bp_b2[b] * this.bp_x2[b]
           - this.bp_a1[b] * this.bp_y1[b] - this.bp_a2[b] * this.bp_y2[b];
         this.bp_x2[b] = this.bp_x1[b];

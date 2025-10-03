@@ -19,7 +19,7 @@ export class ResonatorNode extends AudioWorkletNode {
       outputChannelCount: [2],
       parameterData: {
         nbranches: 4,
-        noiseLevel: 0.1,
+        noiseLevel: 0,
         noiseType: 0,
         lfoEnabled: 0,
         lfoRate: 2,
@@ -31,14 +31,16 @@ export class ResonatorNode extends AudioWorkletNode {
         exciterCutoff: 4000,
         exciterHP: 50,
         // Raindrop exciter defaults
-        rainEnabled: 0,
-        rainGain: 0.3,
-        rainRate: 6,
+        rainEnabled: 1,
+        rainGain: 0.85,
+        rainRate: 0.81,
         rainDurMs: 8,
-        rainSpread: 0.4,
-        rainCenter: 0.5,
-        rainLimbs: 5,
+        rainSpread: 0.69,
+        rainCenter: 0.55,
+        rainLimbs: 9,
         monitorExciter: 0,
+        groupEnabled: 0,
+        groupSplit: 0,
         octaves: 0,
         freqScale: 1,
         freqCenter: 0,
@@ -61,6 +63,8 @@ export class ResonatorNode extends AudioWorkletNode {
   get quantize() { return this.parameters.get('quantize'); }
   get exciterCutoff() { return this.parameters.get('exciterCutoff'); }
   get exciterHP() { return this.parameters.get('exciterHP'); }
+  get groupEnabled() { return this.parameters.get('groupEnabled'); }
+  get groupSplit() { return this.parameters.get('groupSplit'); }
   get octaves() { return this.parameters.get('octaves'); }
   // Raindrop
   get rainEnabled() { return this.parameters.get('rainEnabled'); }
