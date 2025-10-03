@@ -20,16 +20,24 @@ export class ResonatorNode extends AudioWorkletNode {
       parameterData: {
         nbranches: 4,
         noiseLevel: 0.1,
+        noiseType: 0,
+        lfoEnabled: 0,
+        lfoRate: 2,
+        lfoDepth: 0.5,
+        lfoWave: 0,
         rmix: 1,
         dryWet: 1,
         quantize: 0,
         exciterCutoff: 4000,
         exciterHP: 50,
-        exciterBurst: 0,
-        burstRate: 4,
-        burstDurMs: 12,
-        exciterMode: 0,
-        impulseGain: 0.3,
+        // Raindrop exciter defaults
+        rainEnabled: 0,
+        rainGain: 0.3,
+        rainRate: 6,
+        rainDurMs: 8,
+        rainSpread: 0.4,
+        rainCenter: 0.5,
+        rainLimbs: 5,
         monitorExciter: 0,
         octaves: 0,
         freqScale: 1,
@@ -43,22 +51,29 @@ export class ResonatorNode extends AudioWorkletNode {
   // AudioParam helpers
   get nbranches() { return this.parameters.get('nbranches'); }
   get noiseLevel() { return this.parameters.get('noiseLevel'); }
+  get noiseType() { return this.parameters.get('noiseType'); }
+  get lfoEnabled() { return this.parameters.get('lfoEnabled'); }
+  get lfoRate() { return this.parameters.get('lfoRate'); }
+  get lfoDepth() { return this.parameters.get('lfoDepth'); }
+  get lfoWave() { return this.parameters.get('lfoWave'); }
   get rmix() { return this.parameters.get('rmix'); }
   get dryWet() { return this.parameters.get('dryWet'); }
   get quantize() { return this.parameters.get('quantize'); }
   get exciterCutoff() { return this.parameters.get('exciterCutoff'); }
   get exciterHP() { return this.parameters.get('exciterHP'); }
   get octaves() { return this.parameters.get('octaves'); }
-  get exciterBurst() { return this.parameters.get('exciterBurst'); }
-  get burstRate() { return this.parameters.get('burstRate'); }
-  get burstDurMs() { return this.parameters.get('burstDurMs'); }
-  get exciterMode() { return this.parameters.get('exciterMode'); }
-  get impulseGain() { return this.parameters.get('impulseGain'); }
+  // Raindrop
+  get rainEnabled() { return this.parameters.get('rainEnabled'); }
+  get rainGain() { return this.parameters.get('rainGain'); }
+  get rainRate() { return this.parameters.get('rainRate'); }
+  get rainDurMs() { return this.parameters.get('rainDurMs'); }
+  get rainSpread() { return this.parameters.get('rainSpread'); }
+  get rainCenter() { return this.parameters.get('rainCenter'); }
+  get rainLimbs() { return this.parameters.get('rainLimbs'); }
   get monitorExciter() { return this.parameters.get('monitorExciter'); }
   get freqScale() { return this.parameters.get('freqScale'); }
   get freqCenter() { return this.parameters.get('freqCenter'); }
   get decayScale() { return this.parameters.get('decayScale'); }
-  get exciterBandQ() { return this.parameters.get('exciterBandQ'); }
   get exciterBandQ() { return this.parameters.get('exciterBandQ'); }
 
   // Per-branch setters

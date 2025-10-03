@@ -43,19 +43,48 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         automationRate: 'a-rate'
       },
       {
+        name: 'noiseType', // 0=white,1=pink,2=brown,3=blue
+        defaultValue: 0,
+        minValue: 0,
+        maxValue: 3,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'lfoEnabled', // 0/1 toggle
+        defaultValue: 0,
+        minValue: 0,
+        maxValue: 1,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'lfoRate', // Hz
+        defaultValue: 2,
+        minValue: 0.1,
+        maxValue: 20,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'lfoDepth', // 0..1 depth (amplitude scalar from 1-depth..1)
+        defaultValue: 0.5,
+        minValue: 0,
+        maxValue: 1,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'lfoWave', // 0=sine,1=triangle,2=square,3=sample&hold
+        defaultValue: 0,
+        minValue: 0,
+        maxValue: 3,
+        automationRate: 'k-rate'
+      },
+      {
         name: 'rmix',
         defaultValue: 0.5,
         minValue: 0,
         maxValue: 1,
         automationRate: 'a-rate'
       },
-      {
-        name: 'dryWet',
-        defaultValue: 1,
-        minValue: 0,
-        maxValue: 1,
-        automationRate: 'a-rate'
-      },
+      // Removed dryWet: output is always wet-only
       {
         name: 'quantize',
         defaultValue: 0,
@@ -77,39 +106,54 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         maxValue: 2000,
         automationRate: 'k-rate'
       },
+      // Raindrop exciter parameters
       {
-        name: 'exciterBurst',
+        name: 'rainEnabled',
         defaultValue: 0,
         minValue: 0,
         maxValue: 1,
         automationRate: 'k-rate'
       },
       {
-        name: 'burstRate',
-        defaultValue: 4,
+        name: 'rainGain',
+        defaultValue: 0.3,
+        minValue: 0,
+        maxValue: 1,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'rainRate', // triggers per second per limb
+        defaultValue: 6,
         minValue: 0.1,
         maxValue: 40,
         automationRate: 'k-rate'
       },
       {
-        name: 'burstDurMs',
-        defaultValue: 12,
+        name: 'rainDurMs', // envelope decay of a drop
+        defaultValue: 8,
         minValue: 1,
         maxValue: 200,
         automationRate: 'k-rate'
       },
       {
-        name: 'exciterMode', // 0=noise, 1=burst-noise, 2=impulse
-        defaultValue: 0,
+        name: 'rainSpread', // 0..1 controls branch selection spread
+        defaultValue: 0.4,
         minValue: 0,
-        maxValue: 2,
+        maxValue: 1,
         automationRate: 'k-rate'
       },
       {
-        name: 'impulseGain',
-        defaultValue: 0.3,
+        name: 'rainCenter', // 0..1 center across branch indices
+        defaultValue: 0.5,
         minValue: 0,
         maxValue: 1,
+        automationRate: 'k-rate'
+      },
+      {
+        name: 'rainLimbs',
+        defaultValue: 5,
+        minValue: 1,
+        maxValue: 10,
         automationRate: 'k-rate'
       },
       {
@@ -227,10 +271,19 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     this.hpf_x1 = 0; this.hpf_y1 = 0;
     this.hpf_a = 0; // alpha computed per block
 
-    // Burst exciter state
-    this.burstPhase = 0; // cycles 0..1 at burstRate
-    this.burstOnSamples = 0; // current on-window remaining
-    this.burstEnv = 0; // simple AR env for clicks
+    // Raindrop state
+    this.rainEnv = new Float32Array(MAX_BRANCHES); // per-branch short env
+    this.MAX_LIMBS = 16;
+    this.rainPhase = new Float32Array(this.MAX_LIMBS); // per-limb rate phase 0..1
+
+    // LFO and noise shaping state
+    this.lfoPhase = 0;
+    this.lfoSH = 0; // sample & hold value
+    this.prevWhite = 0; // for blue/violet style diff
+    this.brown = 0; // integrator state for brown noise
+    this.pk_b0 = 0; // Paul Kellet pink noise filter states
+    this.pk_b1 = 0;
+    this.pk_b2 = 0;
 
     // Defaults for safety
     for (let i = 0; i < MAX_BRANCHES; i += 1) {
@@ -248,6 +301,10 @@ class ResonatorProcessor extends AudioWorkletProcessor {
       // Initialize bandpass at default center with default Q
       this.recomputeBandpassCoefficients(i, 440, 25);
     }
+
+    // Lightweight PRNG state (xorshift32). Seeded deterministically.
+    // Using a fixed non-zero seed avoids per-sample Math.random() cost.
+    this.rngState = (0x9E3779B9 ^ (sr | 0)) >>> 0;
 
     // Cache previous band Q to force recompute on change
     this.prevBandQ = 25;
@@ -294,6 +351,22 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         this.scalePitchClasses = this.computePitchClasses(name, root);
       }
     };
+  }
+
+  // --- Fast PRNG helpers (xorshift32) ---
+  nextRand() {
+    // Returns float in [0,1)
+    let x = this.rngState | 0;
+    x ^= (x << 13);
+    x ^= (x >>> 17);
+    x ^= (x << 5);
+    this.rngState = x >>> 0;
+    return (this.rngState) * 2.3283064365386963e-10; // 1/2^32
+  }
+
+  nextSigned() {
+    // Returns float in [-1, 1]
+    return this.nextRand() * 2 - 1;
   }
 
   updatePanGains(index) {
@@ -360,7 +433,7 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     const pBranches = parameters.nbranches;
     const pNoise = parameters.noiseLevel;
     const pMix = parameters.rmix;
-    const pDryWet = parameters.dryWet;
+    // dry/wet removed: always wet
     const pQuantize = parameters.quantize;
     const pFreqScale = parameters.freqScale;
     const pOctaves = parameters.octaves;
@@ -368,11 +441,18 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     const pDecayScale = parameters.decayScale;
     const pExciterCut = parameters.exciterCutoff;
     const pExciterHP = parameters.exciterHP;
-    const pExciterBurst = parameters.exciterBurst;
-    const pBurstRate = parameters.burstRate;
-    const pBurstDurMs = parameters.burstDurMs;
-    const pExciterMode = parameters.exciterMode;
-    const pImpulseGain = parameters.impulseGain;
+    const pNoiseType = parameters.noiseType;
+    const pLfoEnabled = parameters.lfoEnabled;
+    const pLfoRate = parameters.lfoRate;
+    const pLfoDepth = parameters.lfoDepth;
+    const pLfoWave = parameters.lfoWave;
+    const pRainEnabled = parameters.rainEnabled;
+    const pRainGain = parameters.rainGain;
+    const pRainRate = parameters.rainRate;
+    const pRainDurMs = parameters.rainDurMs;
+    const pRainSpread = parameters.rainSpread;
+    const pRainCenter = parameters.rainCenter;
+    const pRainLimbs = parameters.rainLimbs;
     const pMonitorExciter = parameters.monitorExciter;
     const pExciterBandQ = parameters.exciterBandQ;
 
@@ -415,54 +495,119 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     const dt = 1 / sampleRate;
     this.hpf_a = RC / (RC + dt);
 
+    // Read k-rate parameters once per block
+    const lfoEnabledBlock = pLfoEnabled && (pLfoEnabled.length === 1 ? pLfoEnabled[0] : pLfoEnabled[0]) >= 0.5;
+    const lfoRateBlock = Math.max(0.1, pLfoRate && (pLfoRate.length === 1 ? pLfoRate[0] : pLfoRate[0]) || 2);
+    const lfoDepthBlock = Math.max(0, Math.min(1, pLfoDepth && (pLfoDepth.length === 1 ? pLfoDepth[0] : pLfoDepth[0]) || 0.5));
+    const lfoWaveBlock = pLfoWave && (pLfoWave.length === 1 ? pLfoWave[0] : pLfoWave[0]) | 0;
+
+    const rainEnabledBlock = pRainEnabled && (pRainEnabled.length === 1 ? pRainEnabled[0] : pRainEnabled[0]) >= 0.5;
+    const monitorExciterBlock = pMonitorExciter && (pMonitorExciter.length === 1 ? pMonitorExciter[0] : pMonitorExciter[0]) >= 0.5;
+
     for (let i = 0; i < frames; i += 1) {
       const noiseLevel = pNoise.length > 1 ? pNoise[i] : pNoise[0];
-      const mode = pExciterMode && (pExciterMode.length === 1 ? pExciterMode[0] : pExciterMode[0]);
-      const white = (Math.random() * 2 - 1) * noiseLevel;
+
+      // LFO amplitude modulation for exciter input level (compute only if enabled)
+      let lfoAmp = 1;
+      if (lfoEnabledBlock) {
+        this.lfoPhase += lfoRateBlock / sampleRate;
+        if (this.lfoPhase >= 1) {
+          this.lfoPhase -= 1;
+          if (lfoWaveBlock === 3) {
+            // sample & hold: new random value on each cycle
+            this.lfoSH = this.nextSigned();
+          }
+        }
+        let lfoVal;
+        switch (lfoWaveBlock) {
+          default: // sine
+            lfoVal = Math.sin(this.lfoPhase * 2 * Math.PI);
+            break;
+          case 1: { // triangle in [-1,1]
+            const p = this.lfoPhase;
+            lfoVal = 4 * Math.abs(p - Math.round(p)) - 1; // saw-tri trick
+            break;
+          }
+          case 2: // square
+            lfoVal = (this.lfoPhase < 0.5) ? 1 : -1;
+            break;
+          case 3: // sample & hold
+            lfoVal = this.lfoSH;
+            break;
+        }
+        lfoAmp = ((1 - lfoDepthBlock) + lfoDepthBlock * ((lfoVal + 1) * 0.5));
+      }
+
+      // Base white noise sample scaled by effective amplitude
+      const baseWhite = (this.nextSigned()) * (noiseLevel * lfoAmp);
+
+      // Color the noise according to noiseType
+      const nType = pNoiseType && (pNoiseType.length === 1 ? pNoiseType[0] : pNoiseType[0]) | 0;
+      let colored = baseWhite;
+      if (nType === 1) {
+        // Pink noise via Paul Kellet approximation
+        this.pk_b0 = 0.99765 * this.pk_b0 + 0.0990460 * baseWhite;
+        this.pk_b1 = 0.96300 * this.pk_b1 + 0.2965164 * baseWhite;
+        this.pk_b2 = 0.57000 * this.pk_b2 + 1.0526913 * baseWhite;
+        colored = this.pk_b0 + this.pk_b1 + this.pk_b2 + 0.1848 * baseWhite;
+        colored *= 0.05; // roughly normalize
+      } else if (nType === 2) {
+        // Brown (integrated) noise with slight damping
+        this.brown = (this.brown + baseWhite * 0.02) * 0.998;
+        // clamp to avoid runaway
+        if (this.brown > 1) this.brown = 1;
+        else if (this.brown < -1) this.brown = -1;
+        colored = this.brown;
+      } else if (nType === 3) {
+        // Blue-ish noise via simple differentiator
+        const diff = baseWhite - this.prevWhite;
+        this.prevWhite = baseWhite;
+        colored = diff * 0.5;
+      }
+
       // First, high-pass to remove lows
-      const hp = this.hpf_a * (this.hpf_y1 + white - this.hpf_x1);
-      this.hpf_x1 = white; this.hpf_y1 = hp;
+      const hp = this.hpf_a * (this.hpf_y1 + colored - this.hpf_x1);
+      this.hpf_x1 = colored; this.hpf_y1 = hp;
       // Then biquad LP filter the exciter noise (mono)
-      let exciter = this.ex_b0 * hp + this.ex_b1 * this.ex_x1 + this.ex_b2 * this.ex_x2 - this.ex_a1 * this.ex_y1 - this.ex_a2 * this.ex_y2;
+      let exciterNoise = this.ex_b0 * hp + this.ex_b1 * this.ex_x1 + this.ex_b2 * this.ex_x2 - this.ex_a1 * this.ex_y1 - this.ex_a2 * this.ex_y2;
       this.ex_x2 = this.ex_x1; this.ex_x1 = hp;
-      this.ex_y2 = this.ex_y1; this.ex_y1 = exciter;
-      // Burst gating
-      let gated = exciter;
-      const doBurst = (mode >= 1) || (pExciterBurst && (pExciterBurst.length === 1 ? pExciterBurst[0] : pExciterBurst[0]) >= 0.5);
-      if (doBurst && mode !== 2) {
-        const rate = Math.max(0.1, pBurstRate && (pBurstRate.length === 1 ? pBurstRate[0] : pBurstRate[0]) || 4);
-        const durMs = Math.max(1, pBurstDurMs && (pBurstDurMs.length === 1 ? pBurstDurMs[0] : pBurstDurMs[0]) || 12);
-        const durSamples = (durMs * 0.001) * sampleRate;
-        // advance phase
-        this.burstPhase += rate / sampleRate;
-        if (this.burstPhase >= 1) {
-          this.burstPhase -= 1;
-          this.burstOnSamples = durSamples;
-        }
-        // AR envelope for clicks
-        const attack = 0.0005 * sampleRate; // 0.5ms
-        const release = 0.002 * sampleRate; // 2ms
-        if (this.burstOnSamples > 0) {
-          this.burstEnv += (1 - this.burstEnv) * (1 / Math.max(1, attack));
-          this.burstOnSamples -= 1;
-        } else {
-          this.burstEnv += (0 - this.burstEnv) * (1 / Math.max(1, release));
-        }
-        gated = exciter * this.burstEnv;
-      } else if (mode === 2) {
-        // Impulse excitation at burst rate
-        const rate = Math.max(0.1, pBurstRate && (pBurstRate.length === 1 ? pBurstRate[0] : pBurstRate[0]) || 4);
-        const impulseGain = pImpulseGain && (pImpulseGain.length === 1 ? pImpulseGain[0] : pImpulseGain[0]) || 0.3;
-        this.burstPhase += rate / sampleRate;
-        if (this.burstPhase >= 1) {
-          this.burstPhase -= 1;
-          gated = impulseGain; // single-sample impulse
-        } else {
-          gated = 0;
+      this.ex_y2 = this.ex_y1; this.ex_y1 = exciterNoise;
+
+      // Raindrop updates (per sample)
+      const rainRate = Math.max(0.1, pRainRate && (pRainRate.length === 1 ? pRainRate[0] : pRainRate[0]) || 6);
+      const rainDurMs = Math.max(1, pRainDurMs && (pRainDurMs.length === 1 ? pRainDurMs[0] : pRainDurMs[0]) || 8);
+      const rainGain = Math.max(0, pRainGain && (pRainGain.length === 1 ? pRainGain[0] : pRainGain[0]) || 0.3);
+      const rainSpread = Math.max(0, Math.min(1, pRainSpread && (pRainSpread.length === 1 ? pRainSpread[0] : pRainSpread[0]) || 0.4));
+      const rainCenter = Math.max(0, Math.min(1, pRainCenter && (pRainCenter.length === 1 ? pRainCenter[0] : pRainCenter[0]) || 0.5));
+      const limbs = Math.max(1, Math.min(10, pRainLimbs && (pRainLimbs.length === 1 ? pRainLimbs[0] : pRainLimbs[0]) || 5)) | 0;
+
+      // per-sample decay coefficient for rain envelopes
+      const rainDecay = Math.exp(-1 / Math.max(1, (rainDurMs * 0.001) * sampleRate));
+      // trigger per active limb
+      if (rainEnabledBlock && limbs > 0 && nBranches > 0) {
+        for (let li = 0; li < limbs; li += 1) {
+          this.rainPhase[li] += rainRate / sampleRate;
+          if (this.rainPhase[li] >= 1) {
+            this.rainPhase[li] -= 1;
+            // choose branch by gaussian around center
+            const centerIdx = Math.round(rainCenter * (nBranches - 1));
+            const sigma = Math.max(0.5, rainSpread * (nBranches - 1) * 0.5);
+            const u1 = this.nextRand() || 1e-10; // Box-Muller
+            const u2 = this.nextRand();
+            const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2); // N(0,1)
+            let idx = Math.round(centerIdx + sigma * z);
+            if (idx < 0) idx = 0; else if (idx >= nBranches) idx = nBranches - 1;
+            // add a small amplitude impulse to envelope
+            const amp = 1;
+            this.rainEnv[idx] += amp;
+          }
         }
       }
+      // decay all envelopes slightly (cheap: subset per sample)
+      for (let di = 0; di < nBranches; di += 1) {
+        this.rainEnv[di] *= rainDecay;
+      }
       const rmixTarget = pMix.length > 1 ? pMix[i] : pMix[0];
-      const dryWet = pDryWet && pDryWet.length > 1 ? pDryWet[i] : (pDryWet ? pDryWet[0] : 1);
       // smooth global rmix
       this.smoothMix = smoothToward(this.smoothMix, rmixTarget, this.alphaMix);
 
@@ -492,10 +637,14 @@ class ResonatorProcessor extends AudioWorkletProcessor {
           this.alphaAmp
         ));
 
-        // update pan gains if pan smoothed changed significantly
-        // lightweight check
+        // Update pan gains only when smoothed pan meaningfully changes (checked sparsely)
         if ((i & 7) === 0) {
-          this.updatePanGains(b);
+          if (!this._prevPanForGains) this._prevPanForGains = new Float32Array(MAX_BRANCHES);
+          const prev = this._prevPanForGains[b];
+          if (Math.abs(panNow - prev) > 1e-3) {
+            this._prevPanForGains[b] = panNow;
+            this.updatePanGains(b);
+          }
         }
 
         // Effective global-scaling adjusted params
@@ -530,10 +679,12 @@ class ResonatorProcessor extends AudioWorkletProcessor {
 
         // Exciter -> filtered noise
         // Per-branch bandpass around the branch frequency
-        const xbp = this.bp_b0[b] * gated + this.bp_b1[b] * this.bp_x1[b] + this.bp_b2[b] * this.bp_x2[b]
+        const rainInput = rainGain * this.rainEnv[b];
+        const branchIn = exciterNoise + rainInput;
+        const xbp = this.bp_b0[b] * branchIn + this.bp_b1[b] * this.bp_x1[b] + this.bp_b2[b] * this.bp_x2[b]
           - this.bp_a1[b] * this.bp_y1[b] - this.bp_a2[b] * this.bp_y2[b];
         this.bp_x2[b] = this.bp_x1[b];
-        this.bp_x1[b] = gated;
+        this.bp_x1[b] = branchIn;
         this.bp_y2[b] = this.bp_y1[b];
         this.bp_y1[b] = xbp;
 
@@ -561,16 +712,15 @@ class ResonatorProcessor extends AudioWorkletProcessor {
       }
 
       // Monitor exciter only (post filter/gate), else wet-only resonator sum
-      const mon = pMonitorExciter && (pMonitorExciter.length === 1 ? pMonitorExciter[0] : pMonitorExciter[0]) >= 0.5;
-      if (mon) {
+      if (monitorExciterBlock) {
         const denom = nBranches > 0 ? nBranches : 1;
         const m = monSum / denom;
         outL[i] = m;
         outR[i] = m;
       } else {
-        // Wet level only (no dry noise in output). 0 = silent, 1 = full resonator
-        outL[i] = dryWet * l;
-        outR[i] = dryWet * r;
+        // Wet level only
+        outL[i] = l;
+        outR[i] = r;
       }
     }
 

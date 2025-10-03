@@ -7,15 +7,24 @@ const MAX = 40;
 
 // ----- Cross-tab exciter control (BroadcastChannel) -----
 const EXCITER_IDS = [
+  'noiseLevel',
+  'noiseType',
+  'lfoEnabled',
+  'lfoRate',
+  'lfoDepth',
+  'lfoWave',
   'exciterCutoff',
   'exciterHP',
   'exciterBandQ',
-  'exciterMode',
-  'impulseGain',
   'monitorExciter',
-  'exciterBurst',
-  'burstRate',
-  'burstDurMs'
+  // Raindrop
+  'rainEnabled',
+  'rainGain',
+  'rainRate',
+  'rainDurMs',
+  'rainSpread',
+  'rainCenter',
+  'rainLimbs'
 ];
 
 let isApplyingRemote = false;
@@ -23,11 +32,40 @@ let bc = null;
 
 function getEl(id) { return document.getElementById(id); }
 
+function setParamById(id, value) {
+  if (!node || !context) return;
+  const t = context.currentTime;
+  switch (id) {
+    case 'noiseLevel': node.noiseLevel && node.noiseLevel.setValueAtTime(parseFloat(value), t); break;
+    case 'noiseType': node.noiseType && node.noiseType.setValueAtTime(parseInt(value, 10), t); break;
+    case 'lfoEnabled': node.lfoEnabled && node.lfoEnabled.setValueAtTime(value ? 1 : 0, t); break;
+    case 'lfoRate': node.lfoRate && node.lfoRate.setValueAtTime(parseFloat(value), t); break;
+    case 'lfoDepth': node.lfoDepth && node.lfoDepth.setValueAtTime(parseFloat(value), t); break;
+    case 'lfoWave': node.lfoWave && node.lfoWave.setValueAtTime(parseInt(value, 10), t); break;
+    case 'exciterCutoff': node.exciterCutoff && node.exciterCutoff.setValueAtTime(parseFloat(value), t); break;
+    case 'exciterHP': node.exciterHP && node.exciterHP.setValueAtTime(parseFloat(value), t); break;
+    case 'exciterBandQ': node.exciterBandQ && node.exciterBandQ.setValueAtTime(parseFloat(value), t); break;
+    case 'monitorExciter': node.monitorExciter && node.monitorExciter.setValueAtTime(value ? 1 : 0, t); break;
+    // Raindrop params
+    case 'rainEnabled': node.rainEnabled && node.rainEnabled.setValueAtTime(value ? 1 : 0, t); break;
+    case 'rainGain': node.rainGain && node.rainGain.setValueAtTime(parseFloat(value), t); break;
+    case 'rainRate': node.rainRate && node.rainRate.setValueAtTime(parseFloat(value), t); break;
+    case 'rainDurMs': node.rainDurMs && node.rainDurMs.setValueAtTime(parseFloat(value), t); break;
+    case 'rainSpread': node.rainSpread && node.rainSpread.setValueAtTime(parseFloat(value), t); break;
+    case 'rainCenter': node.rainCenter && node.rainCenter.setValueAtTime(parseFloat(value), t); break;
+    case 'rainLimbs': node.rainLimbs && node.rainLimbs.setValueAtTime(parseInt(value, 10), t); break;
+  }
+}
+
 function getExciterState() {
   const state = {};
   for (const id of EXCITER_IDS) {
     const el = getEl(id);
-    if (!el) continue;
+    if (!el) {
+      // If control isn't present in this tab, include current node value for key params
+      if (id === 'noiseLevel' && node && node.noiseLevel) state[id] = node.noiseLevel.value;
+      continue;
+    }
     if (el.type === 'checkbox') state[id] = !!el.checked;
     else state[id] = el.value;
   }
@@ -42,7 +80,11 @@ function broadcastState(partial) {
 
 function applyControlFromRemote(id, value) {
   const el = getEl(id);
-  if (!el) return;
+  if (!el) {
+    // If control isn't present in this tab, apply directly to node
+    setParamById(id, value);
+    return;
+  }
   isApplyingRemote = true;
   try {
     if (el.type === 'checkbox') {
@@ -223,9 +265,8 @@ function resetDefaults() {
 
 function updateValueLabels() {
   const get = (id) => document.getElementById(id);
-  get('noiseLevelVal').textContent = Number(get('noiseLevel').value).toFixed(2);
+  if (get('noiseLevel')) get('noiseLevelVal').textContent = Number(get('noiseLevel').value).toFixed(2);
   get('rmixVal').textContent = Number(get('rmix').value).toFixed(2);
-  if (get('dryWet')) get('dryWetVal').textContent = Number(get('dryWet').value).toFixed(2);
   get('nbranchesVal').textContent = get('nbranches').value;
   get('freqScaleVal').textContent = Number(get('freqScale').value).toFixed(2);
   if (get('octaves')) get('octavesVal').textContent = String(parseInt(get('octaves').value, 10));
@@ -236,6 +277,12 @@ function updateValueLabels() {
   get('freqCenterVal').textContent = get('freqCenter').value;
   get('decayScaleVal').textContent = Number(get('decayScale').value).toFixed(2);
   if (get('exciterBandQ')) get('exciterBandQVal').textContent = get('exciterBandQ').value;
+  if (get('rainRate')) get('rainRateVal').textContent = Number(get('rainRate').value).toFixed(2);
+  if (get('rainDurMs')) get('rainDurMsVal').textContent = get('rainDurMs').value;
+  if (get('rainGain')) get('rainGainVal').textContent = Number(get('rainGain').value).toFixed(2);
+  if (get('rainSpread')) get('rainSpreadVal').textContent = Number(get('rainSpread').value).toFixed(2);
+  if (get('rainCenter')) get('rainCenterVal').textContent = Number(get('rainCenter').value).toFixed(2);
+  if (get('rainLimbs')) get('rainLimbsVal').textContent = get('rainLimbs').value;
 }
 
 async function startAudio() {
@@ -246,20 +293,21 @@ async function startAudio() {
 
   // Wire global sliders
   const $ = (id) => document.getElementById(id);
-  const sliders = ['noiseLevel', 'rmix', 'dryWet', 'nbranches', 'freqScale', 'octaves', 'freqCenter', 'decayScale'];
+  const sliders = ['rmix', 'nbranches', 'freqScale', 'octaves', 'freqCenter', 'decayScale'];
   // Exciter controls may live in a separate tab now; guard for missing elements
-  const optional = ['exciterCutoff', 'exciterHP', 'burstRate', 'burstDurMs', 'impulseGain', 'exciterBandQ'];
+  const optional = ['noiseType', 'lfoRate', 'lfoDepth', 'exciterCutoff', 'exciterHP', 'exciterBandQ', 'rainRate', 'rainDurMs', 'rainGain', 'rainSpread', 'rainCenter', 'rainLimbs'];
   for (const id of optional) { if (document.getElementById(id)) sliders.push(id); }
   sliders.forEach((id) => {
     const el = $(id);
+    if (!el) return;
     el.addEventListener('input', () => {
       updateValueLabels();
       if (!node) return;
       const t = context.currentTime;
       switch (id) {
         case 'noiseLevel': node.noiseLevel.setValueAtTime(parseFloat(el.value), t); break;
+        case 'noiseType': node.noiseType.setValueAtTime(parseInt(el.value, 10), t); break;
         case 'rmix': node.rmix.setValueAtTime(parseFloat(el.value), t); break;
-        case 'dryWet': node.dryWet.setValueAtTime(parseFloat(el.value), t); break;
         case 'nbranches': {
           const n = parseInt(el.value, 10);
           node.nbranches.setValueAtTime(n, t);
@@ -280,19 +328,28 @@ async function startAudio() {
     });
   });
 
-  // Burst toggle (legacy) and mode select
-  const burst = document.getElementById('exciterBurst');
-  if (burst) {
-    burst.addEventListener('change', () => {
+  // Raindrop enable checkbox
+  const rainEnableEl = document.getElementById('rainEnabled');
+  if (rainEnableEl) {
+    rainEnableEl.addEventListener('change', () => {
       if (!node) return;
-      node.exciterBurst.setValueAtTime(burst.checked ? 1 : 0, context.currentTime);
+      node.rainEnabled.setValueAtTime(rainEnableEl.checked ? 1 : 0, context.currentTime);
     });
   }
-  const modeSel = document.getElementById('exciterMode');
-  if (modeSel) {
-    modeSel.addEventListener('change', () => {
+
+  // LFO enable and wave selects (change events)
+  const lfoEnableEl = document.getElementById('lfoEnabled');
+  if (lfoEnableEl) {
+    lfoEnableEl.addEventListener('change', () => {
       if (!node) return;
-      node.exciterMode.setValueAtTime(parseInt(modeSel.value, 10), context.currentTime);
+      node.lfoEnabled.setValueAtTime(lfoEnableEl.checked ? 1 : 0, context.currentTime);
+    });
+  }
+  const lfoWaveEl = document.getElementById('lfoWave');
+  if (lfoWaveEl) {
+    lfoWaveEl.addEventListener('change', () => {
+      if (!node) return;
+      node.lfoWave.setValueAtTime(parseInt(lfoWaveEl.value, 10), context.currentTime);
     });
   }
 
@@ -339,23 +396,45 @@ document.getElementById('startBtn').addEventListener('click', startAudio);
 document.getElementById('randomizeBtn').addEventListener('click', () => {
   const n = parseInt(document.getElementById('nbranches').value, 10) || 16;
   randomize(n);
+  // Also randomize musical scale root and scale selection
+  const rootEl = document.getElementById('scaleRoot');
+  const scaleEl = document.getElementById('scaleName');
+  if (rootEl && scaleEl) {
+    const rootVals = Array.from(rootEl.options).map(o => o.value);
+    // Prefer to avoid 'off' when randomizing scale so quantize is active
+    const allScaleVals = Array.from(scaleEl.options).map(o => o.value);
+    const scaleVals = allScaleVals.filter(v => v !== 'off');
+    const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+    const newRoot = pick(rootVals);
+    const newScale = pick(scaleVals.length ? scaleVals : allScaleVals);
+    rootEl.value = newRoot;
+    scaleEl.value = newScale;
+    // Trigger change handlers to propagate to audio node if running
+    rootEl.dispatchEvent(new Event('change', { bubbles: true }));
+    scaleEl.dispatchEvent(new Event('change', { bubbles: true }));
+  }
 });
 document.getElementById('resetBtn').addEventListener('click', () => {
   // Reset globals
-  document.getElementById('noiseLevel').value = '0.1';
+  if (document.getElementById('noiseLevel')) document.getElementById('noiseLevel').value = '0.1';
   document.getElementById('rmix').value = '1';
-  document.getElementById('dryWet').value = '1';
   document.getElementById('nbranches').value = '4';
   document.getElementById('freqScale').value = '1';
   document.getElementById('octaves').value = '0';
   if (document.getElementById('exciterCutoff')) document.getElementById('exciterCutoff').value = '4000';
   if (document.getElementById('exciterHP')) document.getElementById('exciterHP').value = '50';
-  const burstEl = document.getElementById('exciterBurst');
-  if (burstEl) burstEl.checked = false;
-  if (document.getElementById('burstRate')) document.getElementById('burstRate').value = '4';
-  if (document.getElementById('burstDurMs')) document.getElementById('burstDurMs').value = '12';
-  if (document.getElementById('exciterMode')) document.getElementById('exciterMode').value = '0';
-  if (document.getElementById('impulseGain')) document.getElementById('impulseGain').value = '0.3';
+  if (document.getElementById('noiseType')) document.getElementById('noiseType').value = '0';
+  if (document.getElementById('lfoEnabled')) document.getElementById('lfoEnabled').checked = false;
+  if (document.getElementById('lfoRate')) document.getElementById('lfoRate').value = '2';
+  if (document.getElementById('lfoDepth')) document.getElementById('lfoDepth').value = '0.5';
+  if (document.getElementById('lfoWave')) document.getElementById('lfoWave').value = '0';
+  if (document.getElementById('rainEnabled')) document.getElementById('rainEnabled').checked = false;
+  if (document.getElementById('rainRate')) document.getElementById('rainRate').value = '6';
+  if (document.getElementById('rainDurMs')) document.getElementById('rainDurMs').value = '8';
+  if (document.getElementById('rainGain')) document.getElementById('rainGain').value = '0.3';
+  if (document.getElementById('rainSpread')) document.getElementById('rainSpread').value = '0.4';
+  if (document.getElementById('rainCenter')) document.getElementById('rainCenter').value = '0.5';
+  if (document.getElementById('rainLimbs')) document.getElementById('rainLimbs').value = '5';
   if (document.getElementById('monitorExciter')) document.getElementById('monitorExciter').checked = false;
   document.getElementById('freqCenter').value = '0';
   document.getElementById('decayScale').value = '1';
@@ -369,18 +448,24 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   if (node && context) {
     const t = context.currentTime;
     node.noiseLevel.setValueAtTime(0.1, t);
+      if (node.noiseType) node.noiseType.setValueAtTime(0, t);
+      if (node.lfoEnabled) node.lfoEnabled.setValueAtTime(0, t);
+      if (node.lfoRate) node.lfoRate.setValueAtTime(2, t);
+      if (node.lfoDepth) node.lfoDepth.setValueAtTime(0.5, t);
+      if (node.lfoWave) node.lfoWave.setValueAtTime(0, t);
     node.rmix.setValueAtTime(1, t);
-    node.dryWet.setValueAtTime(1, t);
     node.nbranches.setValueAtTime(4, t);
     node.freqScale.setValueAtTime(1, t);
     node.octaves.setValueAtTime(0, t);
     if (node.exciterCutoff) node.exciterCutoff.setValueAtTime(4000, t);
     if (node.exciterHP) node.exciterHP.setValueAtTime(50, t);
-    if (node.exciterBurst) node.exciterBurst.setValueAtTime(0, t);
-    if (node.burstRate) node.burstRate.setValueAtTime(4, t);
-    if (node.burstDurMs) node.burstDurMs.setValueAtTime(12, t);
-    if (node.exciterMode) node.exciterMode.setValueAtTime(0, t);
-    if (node.impulseGain) node.impulseGain.setValueAtTime(0.3, t);
+    if (node.rainEnabled) node.rainEnabled.setValueAtTime(0, t);
+    if (node.rainRate) node.rainRate.setValueAtTime(6, t);
+    if (node.rainDurMs) node.rainDurMs.setValueAtTime(8, t);
+    if (node.rainGain) node.rainGain.setValueAtTime(0.3, t);
+    if (node.rainSpread) node.rainSpread.setValueAtTime(0.4, t);
+    if (node.rainCenter) node.rainCenter.setValueAtTime(0.5, t);
+    if (node.rainLimbs) node.rainLimbs.setValueAtTime(5, t);
     if (node.monitorExciter) node.monitorExciter.setValueAtTime(0, t);
     node.freqCenter.setValueAtTime(0, t);
     node.decayScale.setValueAtTime(1, t);

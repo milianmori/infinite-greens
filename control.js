@@ -1,15 +1,24 @@
 // Cross-tab controller for exciter parameters
 
 const EXCITER_IDS = [
+  'noiseLevel',
+  'noiseType',
+  'lfoEnabled',
+  'lfoRate',
+  'lfoDepth',
+  'lfoWave',
   'exciterCutoff',
   'exciterHP',
   'exciterBandQ',
-  'exciterMode',
-  'impulseGain',
   'monitorExciter',
-  'exciterBurst',
-  'burstRate',
-  'burstDurMs'
+  // Raindrop params
+  'rainEnabled',
+  'rainGain',
+  'rainRate',
+  'rainDurMs',
+  'rainSpread',
+  'rainCenter',
+  'rainLimbs'
 ];
 
 let bc = null;
@@ -19,12 +28,18 @@ function getEl(id) { return document.getElementById(id); }
 
 function updateValueLabels() {
   const get = (id) => document.getElementById(id);
+  if (get('noiseLevel')) get('noiseLevelVal').textContent = Number(get('noiseLevel').value).toFixed(2);
+  if (get('lfoRate')) get('lfoRateVal').textContent = Number(get('lfoRate').value).toFixed(2);
+  if (get('lfoDepth')) get('lfoDepthVal').textContent = Number(get('lfoDepth').value).toFixed(2);
   if (get('exciterCutoff')) get('exciterCutoffVal').textContent = get('exciterCutoff').value;
   if (get('exciterHP')) get('exciterHPVal').textContent = get('exciterHP').value;
   if (get('exciterBandQ')) get('exciterBandQVal').textContent = get('exciterBandQ').value;
-  if (get('burstRate')) get('burstRateVal').textContent = Number(get('burstRate').value).toFixed(2);
-  if (get('burstDurMs')) get('burstDurMsVal').textContent = get('burstDurMs').value;
-  if (get('impulseGain')) get('impulseGainVal').textContent = Number(get('impulseGain').value).toFixed(2);
+  if (get('rainRate')) get('rainRateVal').textContent = Number(get('rainRate').value).toFixed(2);
+  if (get('rainDurMs')) get('rainDurMsVal').textContent = get('rainDurMs').value;
+  if (get('rainGain')) get('rainGainVal').textContent = Number(get('rainGain').value).toFixed(2);
+  if (get('rainSpread')) get('rainSpreadVal').textContent = Number(get('rainSpread').value).toFixed(2);
+  if (get('rainCenter')) get('rainCenterVal').textContent = Number(get('rainCenter').value).toFixed(2);
+  if (get('rainLimbs')) get('rainLimbsVal').textContent = get('rainLimbs').value;
 }
 
 function sendSet(id, value) {
