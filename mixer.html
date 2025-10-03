@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mixer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Mixer</h1>
+      </header>
+      <section class="mixer">
+        <div class="card">
+          <h3>Output A (Noise)</h3>
+          <div class="hflex">
+            <div class="meter"><div id="meter0Bar" class="bar"></div></div>
+            <div style="flex:1">
+              <label for="noiseLP">Noise LPF (Hz)</label>
+              <input id="noiseLP" type="range" min="0" max="1" step="0.001" value="1" />
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Output B (Rain)</h3>
+          <div class="meter"><div id="meter1Bar" class="bar"></div></div>
+        </div>
+        <div class="card">
+          <h3>Tips</h3>
+          <div style="font-size:12px;color:#94a3b8">Start audio in the main window first. This tab mirrors output levels and lets you low‑pass the continuous noise path.</div>
+        </div>
+      </section>
+    </div>
+    <script>
+      // Connect slider to main window mixer API via opener or shared window
+      function getMixerApi() {
+        try {
+          if (window.opener && window.opener._mixerApi) return window.opener._mixerApi;
+        } catch (_) {}
+        try {
+          if (window._mixerApi) return window._mixerApi;
+        } catch (_) {}
+        return null;
+      }
+      const LPF_MIN = 50;
+      const LPF_MAX = 20000;
+      function hzToNormLPF(hz) {
+        const min = LPF_MIN, max = LPF_MAX;
+        const safe = Math.min(Math.max(hz, min), max);
+        return Math.log(safe / min) / Math.log(max / min);
+      }
+      function normToHzLPF(norm) {
+        const min = LPF_MIN, max = LPF_MAX;
+        const c = Math.min(Math.max(parseFloat(norm) || 0, 0), 1);
+        return min * Math.pow(max / min, c);
+      }
+      const lp = document.getElementById('noiseLP');
+      const api = getMixerApi();
+      const setLP = (normVal) => { const a = getMixerApi(); if (a) a.setNoiseLP(normToHzLPF(normVal)); };
+      if (lp) {
+        lp.addEventListener('input', (e) => {
+          const norm = e.target.value;
+          const hz = normToHzLPF(norm);
+          setLP(norm);
+          try {
+            const ch = new BroadcastChannel('mixer');
+            ch.postMessage({ type: 'setNoiseLP', value: hz });
+          } catch(_) {}
+        });
+      }
+      // Listen for LPF updates from main window randomizer
+      try {
+        if (typeof BroadcastChannel !== 'undefined') {
+          const chIn = new BroadcastChannel('mixer');
+          chIn.onmessage = (event) => {
+            const data = event.data || {};
+            if (data.type === 'setNoiseLP' && typeof data.value === 'number' && lp) {
+              try { lp.value = String(hzToNormLPF(data.value)); } catch(_) {}
+            }
+          };
+        }
+      } catch(_) {}
+      // If main tab not started yet, keep trying to attach API
+      let tries = 0;
+      const retry = () => {
+        const a = getMixerApi();
+        if (a) {
+          try { lp.value = String(hzToNormLPF(a.getNoiseLP() || LPF_MAX)); } catch(_) {}
+          return;
+        }
+        tries += 1;
+        if (tries < 100) setTimeout(retry, 300);
+      };
+      retry();
+    </script>
+  </body>
+  </html>
+

@@ -15,6 +15,7 @@
         <h1>Exciter Controls</h1>
         <div class="controls">
           <button id="requestSyncBtn">Sync From Main</button>
+          <button id="openMixerBtn">Open Mixer</button>
         </div>
       </header>
 
@@ -68,10 +69,16 @@
           <input id="exciterHP" type="range" min="10" max="2000" step="1" value="50" />
         </div>
         <div class="slider">
-          <label for="exciterBandQ">
-            Exciter Band Q <span id="exciterBandQVal">30</span>
+          <label for="exciterBandQNoise">
+            Exciter Band Q (Noise) <span id="exciterBandQNoiseVal">30</span>
           </label>
-          <input id="exciterBandQ" type="range" min="0.5" max="80" step="0.5" value="30" />
+          <input id="exciterBandQNoise" type="range" min="0.5" max="80" step="0.5" value="30" />
+        </div>
+        <div class="slider">
+          <label for="exciterBandQRain">
+            Exciter Band Q (Rain) <span id="exciterBandQRainVal">30</span>
+          </label>
+          <input id="exciterBandQRain" type="range" min="0.5" max="80" step="0.5" value="30" />
         </div>
         <div class="slider">
           <label for="monitorExciter">Monitor Exciter Only</label>
@@ -112,6 +119,14 @@
     </div>
 
     <script type="module" src="control.js"></script>
+    <script>
+      const btn = document.getElementById('openMixerBtn');
+      if (btn) {
+        btn.addEventListener('click', () => {
+          window.open('mixer.html', 'Mixer');
+        });
+      }
+    </script>
   </body>
   </html>
 

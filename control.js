@@ -9,7 +9,8 @@ const EXCITER_IDS = [
   'lfoWave',
   'exciterCutoff',
   'exciterHP',
-  'exciterBandQ',
+  'exciterBandQNoise',
+  'exciterBandQRain',
   'monitorExciter',
   // Raindrop params
   'rainEnabled',
@@ -25,6 +26,16 @@ let bc = null;
 let isApplyingRemote = false;
 
 function getEl(id) { return document.getElementById(id); }
+
+// ----- Persistence (localStorage) -----
+const EXCITER_STORAGE_KEY = 'exciterStateV1';
+function loadJson(key) { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (_) { return null; } }
+function saveJson(key, obj) { try { localStorage.setItem(key, JSON.stringify(obj || {})); } catch (_) {} }
+function saveExciterPartial(partial) {
+  const cur = loadJson(EXCITER_STORAGE_KEY) || {};
+  const next = { ...cur, ...partial };
+  saveJson(EXCITER_STORAGE_KEY, next);
+}
 
 // Log mapping for rain rate slider (0..1 -> Hz)
 const RAIN_MIN_HZ = 0.1;
@@ -49,7 +60,8 @@ function updateValueLabels() {
   if (get('lfoDepth')) get('lfoDepthVal').textContent = Number(get('lfoDepth').value).toFixed(2);
   if (get('exciterCutoff')) get('exciterCutoffVal').textContent = get('exciterCutoff').value;
   if (get('exciterHP')) get('exciterHPVal').textContent = get('exciterHP').value;
-  if (get('exciterBandQ')) get('exciterBandQVal').textContent = get('exciterBandQ').value;
+  if (get('exciterBandQNoise')) get('exciterBandQNoiseVal').textContent = get('exciterBandQNoise').value;
+  if (get('exciterBandQRain')) get('exciterBandQRainVal').textContent = get('exciterBandQRain').value;
   if (get('rainRate')) {
     const norm = parseFloat(get('rainRate').value);
     const hz = rainNormToHz(norm);
@@ -91,6 +103,8 @@ function applyFromMain(values) {
         const evtType = (el.tagName === 'SELECT') ? 'change' : 'input';
         el.dispatchEvent(new Event(evtType, { bubbles: true }));
       }
+      // persist any applied value
+      saveExciterPartial({ [id]: value });
     }
   } finally {
     isApplyingRemote = false;
@@ -127,6 +141,7 @@ function setup() {
       } else {
         value = el.value;
       }
+      saveExciterPartial({ [id]: value });
       sendSet(id, value);
       updateValueLabels();
     };
@@ -146,6 +161,10 @@ function setup() {
   }
 
   updateValueLabels();
+
+  // Apply saved exciter state immediately on control page load
+  const saved = loadJson(EXCITER_STORAGE_KEY);
+  if (saved) applyFromMain(saved);
 }
 
 document.addEventListener('DOMContentLoaded', setup);

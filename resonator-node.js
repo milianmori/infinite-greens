@@ -15,8 +15,8 @@ export class ResonatorNode extends AudioWorkletNode {
   constructor(context) {
     super(context, 'resonator-processor', {
       numberOfInputs: 0,
-      numberOfOutputs: 1,
-      outputChannelCount: [2],
+      numberOfOutputs: 2,
+      outputChannelCount: [2, 2],
       parameterData: {
         nbranches: 4,
         noiseLevel: 0.03,
@@ -26,7 +26,6 @@ export class ResonatorNode extends AudioWorkletNode {
         lfoDepth: 0.7,
         lfoWave: 0,
         rmix: 1,
-        dryWet: 1,
         quantize: 0,
         exciterCutoff: 4000,
         exciterHP: 50,
@@ -44,8 +43,9 @@ export class ResonatorNode extends AudioWorkletNode {
         octaves: 0,
         freqScale: 1,
         freqCenter: 0,
-        decayScale: 1
-        , exciterBandQ: 30
+        decayScale: 1,
+        exciterBandQNoise: 30,
+        exciterBandQRain: 30
       }
     });
   }
@@ -59,7 +59,6 @@ export class ResonatorNode extends AudioWorkletNode {
   get lfoDepth() { return this.parameters.get('lfoDepth'); }
   get lfoWave() { return this.parameters.get('lfoWave'); }
   get rmix() { return this.parameters.get('rmix'); }
-  get dryWet() { return this.parameters.get('dryWet'); }
   get quantize() { return this.parameters.get('quantize'); }
   get exciterCutoff() { return this.parameters.get('exciterCutoff'); }
   get exciterHP() { return this.parameters.get('exciterHP'); }
@@ -78,7 +77,8 @@ export class ResonatorNode extends AudioWorkletNode {
   get freqScale() { return this.parameters.get('freqScale'); }
   get freqCenter() { return this.parameters.get('freqCenter'); }
   get decayScale() { return this.parameters.get('decayScale'); }
-  get exciterBandQ() { return this.parameters.get('exciterBandQ'); }
+  get exciterBandQNoise() { return this.parameters.get('exciterBandQNoise'); }
+  get exciterBandQRain() { return this.parameters.get('exciterBandQRain'); }
 
   // Per-branch setters
   setBranchParams(index, { freq, decay, amp, pan }) {
