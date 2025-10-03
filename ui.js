@@ -121,6 +121,7 @@ function updateValueLabels() {
   if (get('exciterHP')) get('exciterHPVal').textContent = get('exciterHP').value;
   get('freqCenterVal').textContent = get('freqCenter').value;
   get('decayScaleVal').textContent = Number(get('decayScale').value).toFixed(2);
+  if (get('exciterBandQ')) get('exciterBandQVal').textContent = get('exciterBandQ').value;
 }
 
 async function startAudio() {
@@ -132,6 +133,8 @@ async function startAudio() {
   // Wire global sliders
   const $ = (id) => document.getElementById(id);
   const sliders = ['noiseLevel', 'rmix', 'dryWet', 'nbranches', 'freqScale', 'octaves', 'exciterCutoff', 'exciterHP', 'burstRate', 'burstDurMs', 'impulseGain', 'freqCenter', 'decayScale'];
+  // Add exciterBandQ if present in the DOM
+  if (document.getElementById('exciterBandQ')) sliders.push('exciterBandQ');
   sliders.forEach((id) => {
     const el = $(id);
     el.addEventListener('input', () => {
@@ -157,6 +160,7 @@ async function startAudio() {
         case 'impulseGain': node.impulseGain.setValueAtTime(parseFloat(el.value), t); break;
         case 'freqCenter': node.freqCenter.setValueAtTime(parseFloat(el.value), t); break;
         case 'decayScale': node.decayScale.setValueAtTime(parseFloat(el.value), t); break;
+        case 'exciterBandQ': node.exciterBandQ.setValueAtTime(parseFloat(el.value), t); break;
       }
     });
   });
@@ -225,6 +229,8 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   document.getElementById('monitorExciter').checked = false;
   document.getElementById('freqCenter').value = '0';
   document.getElementById('decayScale').value = '1';
+  const qEl = document.getElementById('exciterBandQ');
+  if (qEl) qEl.value = '25';
   document.getElementById('quantize').checked = false;
   updateValueLabels();
 

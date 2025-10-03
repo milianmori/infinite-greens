@@ -147,6 +147,14 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         maxValue: 4,
         automationRate: 'k-rate'
       }
+      ,
+      {
+        name: 'exciterBandQ',
+        defaultValue: 25,
+        minValue: 0.5,
+        maxValue: 80,
+        automationRate: 'k-rate'
+      }
     ];
   }
 
@@ -184,6 +192,17 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     this.c_rsin = new Float32Array(MAX_BRANCHES);
     this.c_ry1 = new Float32Array(MAX_BRANCHES);
     this.c_iy1 = new Float32Array(MAX_BRANCHES);
+
+    // Per-branch bandpass filter for exciter shaping around each mode
+    this.bp_b0 = new Float32Array(MAX_BRANCHES);
+    this.bp_b1 = new Float32Array(MAX_BRANCHES);
+    this.bp_b2 = new Float32Array(MAX_BRANCHES);
+    this.bp_a1 = new Float32Array(MAX_BRANCHES);
+    this.bp_a2 = new Float32Array(MAX_BRANCHES);
+    this.bp_x1 = new Float32Array(MAX_BRANCHES);
+    this.bp_x2 = new Float32Array(MAX_BRANCHES);
+    this.bp_y1 = new Float32Array(MAX_BRANCHES);
+    this.bp_y2 = new Float32Array(MAX_BRANCHES);
 
     // Cached effective params for re-coefficient checks
     this.cachedEffFreq = new Float32Array(MAX_BRANCHES);
@@ -226,7 +245,12 @@ class ResonatorProcessor extends AudioWorkletProcessor {
       this.cachedEffFreq[i] = 0;
       this.cachedEffDecay[i] = 0;
       this.recomputeCoefficients(i, 440, 400); // initialize
+      // Initialize bandpass at default center with default Q
+      this.recomputeBandpassCoefficients(i, 440, 25);
     }
+
+    // Cache previous band Q to force recompute on change
+    this.prevBandQ = 25;
 
     this.port.onmessage = (event) => {
       const data = event.data || {};
@@ -296,6 +320,27 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     this.c_rsin[index] = radius * Math.sin(omega);
   }
 
+  recomputeBandpassCoefficients(index, centerHz, bandQ) {
+    const sr = sampleRate;
+    const w0 = 2 * Math.PI * Math.max(1, Math.min(sr * 0.45, centerHz)) / sr;
+    const cosw0 = Math.cos(w0);
+    const sinw0 = Math.sin(w0);
+    const Q = Math.max(0.5, bandQ);
+    const alpha = sinw0 / (2 * Q);
+    // RBJ bandpass (constant skirt gain, peak gain = Q)
+    let b0 = Q * alpha;
+    let b1 = 0;
+    let b2 = -Q * alpha;
+    let a0 = 1 + alpha;
+    let a1 = -2 * cosw0;
+    let a2 = 1 - alpha;
+    this.bp_b0[index] = b0 / a0;
+    this.bp_b1[index] = b1 / a0;
+    this.bp_b2[index] = b2 / a0;
+    this.bp_a1[index] = a1 / a0;
+    this.bp_a2[index] = a2 / a0;
+  }
+
   process(inputs, outputs, parameters) {
     const output = outputs[0];
     const outL = output[0];
@@ -320,12 +365,18 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     const pExciterMode = parameters.exciterMode;
     const pImpulseGain = parameters.impulseGain;
     const pMonitorExciter = parameters.monitorExciter;
+    const pExciterBandQ = parameters.exciterBandQ;
 
     const freqScale = pFreqScale.length === 1 ? pFreqScale[0] : pFreqScale[0];
     const freqCenter = pFreqCenter.length === 1 ? pFreqCenter[0] : pFreqCenter[0];
     const decayScale = pDecayScale.length === 1 ? pDecayScale[0] : pDecayScale[0];
 
     const nBranches = clamp(pBranches[0] | 0, 0, MAX_BRANCHES);
+
+    // Bandpass Q for per-branch exciter filters
+    const bandQ = pExciterBandQ && (pExciterBandQ.length === 1 ? pExciterBandQ[0] : pExciterBandQ[0]) || 25;
+    const bandQClamped = Math.max(0.5, Math.min(80, bandQ));
+    const bandQChanged = Math.abs(bandQClamped - this.prevBandQ) > 1e-6;
 
     // Compute exciter biquad LPF coefficients once per block (Butterworth, Q≈0.7071)
     const cut = pExciterCut && (pExciterCut.length === 1 ? pExciterCut[0] : pExciterCut[0]);
@@ -408,6 +459,7 @@ class ResonatorProcessor extends AudioWorkletProcessor {
 
       let l = 0;
       let r = 0;
+      let monSum = 0;
 
       for (let b = 0; b < nBranches; b += 1) {
         // smooth per-branch params
@@ -449,25 +501,35 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         const effDecay = Math.max(1, this.branchDecayMs[b] * decayScale);
 
         // Update coefficients if effective params changed notably
-        if (
-          Math.abs(effFreq - this.cachedEffFreq[b]) > 0.1 ||
-          Math.abs(effDecay - this.cachedEffDecay[b]) > 0.1
-        ) {
+        const freqChanged = Math.abs(effFreq - this.cachedEffFreq[b]) > 0.1;
+        const decayChanged = Math.abs(effDecay - this.cachedEffDecay[b]) > 0.1;
+        if (freqChanged || decayChanged) {
           this.cachedEffFreq[b] = effFreq;
           this.cachedEffDecay[b] = effDecay;
           this.recomputeCoefficients(b, effFreq, effDecay);
         }
 
+        // Recompute bandpass if needed (on freq or Q change)
+        if (freqChanged || bandQChanged) {
+          this.recomputeBandpassCoefficients(b, effFreq, bandQClamped);
+        }
+
         // Exciter -> filtered noise
-        const x = gated;
+        // Per-branch bandpass around the branch frequency
+        const xbp = this.bp_b0[b] * gated + this.bp_b1[b] * this.bp_x1[b] + this.bp_b2[b] * this.bp_x2[b]
+          - this.bp_a1[b] * this.bp_y1[b] - this.bp_a2[b] * this.bp_y2[b];
+        this.bp_x2[b] = this.bp_x1[b];
+        this.bp_x1[b] = gated;
+        this.bp_y2[b] = this.bp_y1[b];
+        this.bp_y1[b] = xbp;
 
         // 2-pole real resonator
-        const y = this.two_a[b] * x + this.two_b[b] * this.two_y1[b] + this.two_c[b] * this.two_y2[b];
+        const y = this.two_a[b] * xbp + this.two_b[b] * this.two_y1[b] + this.two_c[b] * this.two_y2[b];
         this.two_y2[b] = this.two_y1[b];
         this.two_y1[b] = clamp(y, -1, 1);
 
         // Complex 1-pole resonator
-        const ry = x * 0.02 + this.c_rcos[b] * this.c_ry1[b] - this.c_rsin[b] * this.c_iy1[b];
+        const ry = xbp * 0.02 + this.c_rcos[b] * this.c_ry1[b] - this.c_rsin[b] * this.c_iy1[b];
         const iy = this.c_rsin[b] * this.c_ry1[b] + this.c_rcos[b] * this.c_iy1[b];
         this.c_ry1[b] = clamp(ry, -1, 1);
         this.c_iy1[b] = clamp(iy, -1, 1);
@@ -479,19 +541,27 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         const v = sum * amp;
         l += v * this.leftPanGain[b];
         r += v * this.rightPanGain[b];
+
+        // For monitoring: sum the per-branch bandpassed exciter
+        monSum += xbp;
       }
 
       // Monitor exciter only (post filter/gate), else wet-only resonator sum
       const mon = pMonitorExciter && (pMonitorExciter.length === 1 ? pMonitorExciter[0] : pMonitorExciter[0]) >= 0.5;
       if (mon) {
-        outL[i] = exciter;
-        outR[i] = exciter;
+        const denom = nBranches > 0 ? nBranches : 1;
+        const m = monSum / denom;
+        outL[i] = m;
+        outR[i] = m;
       } else {
         // Wet level only (no dry noise in output). 0 = silent, 1 = full resonator
         outL[i] = dryWet * l;
         outR[i] = dryWet * r;
       }
     }
+
+    // Update cached band Q after processing block
+    if (bandQChanged) this.prevBandQ = bandQClamped;
 
     return true;
   }

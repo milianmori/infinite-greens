@@ -35,6 +35,7 @@ export class ResonatorNode extends AudioWorkletNode {
         freqScale: 1,
         freqCenter: 0,
         decayScale: 1
+        , exciterBandQ: 25
       }
     });
   }
@@ -57,6 +58,8 @@ export class ResonatorNode extends AudioWorkletNode {
   get freqScale() { return this.parameters.get('freqScale'); }
   get freqCenter() { return this.parameters.get('freqCenter'); }
   get decayScale() { return this.parameters.get('decayScale'); }
+  get exciterBandQ() { return this.parameters.get('exciterBandQ'); }
+  get exciterBandQ() { return this.parameters.get('exciterBandQ'); }
 
   // Per-branch setters
   setBranchParams(index, { freq, decay, amp, pan }) {
