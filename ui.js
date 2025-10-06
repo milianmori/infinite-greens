@@ -946,6 +946,11 @@ async function startAudio() {
   // Initialize scale/quantize state from UI
   (function initScale() { if (scaleRootSel && scaleNameSel) sendScale(); })();
   resetDefaults();
+  // Trigger Randomize automatically after starting audio so user doesn't need to click
+  try {
+    const randomizeBtn = document.getElementById('randomizeBtn');
+    if (randomizeBtn) randomizeBtn.click();
+  } catch (_) {}
 
   // After initializing defaults, share current exciter state with controller tabs
   broadcastState();

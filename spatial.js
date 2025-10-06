@@ -104,6 +104,7 @@ class SpatialMixer {
     this.revConvolver = null;
     this.revWet = null;
     this.revDry = null;
+    this.directBypass = false;
   }
 
   attach() {
@@ -135,7 +136,7 @@ class SpatialMixer {
     this.stereoSum.connect(this.revDry);
     this.stereoSum.connect(this.revConvolver);
     this.revConvolver.connect(this.revWet);
-    // Mix to master
+    // Mix to master (default: spatial active)
     this.revDry.connect(this.master);
     this.revWet.connect(this.master);
 
@@ -281,20 +282,29 @@ class SpatialMixer {
   }
 
   wireBypassAndReverb() {
-    // Bypass HRTF: toggle panningModel between HRTF and equalpower
-    const bypassH = document.getElementById('bypassHRTF');
-    if (bypassH) {
+    // Spatial bypass: disconnect spatial graph and unmute main stereo
+    const bypassSpatial = document.getElementById('bypassSpatial');
+    if (bypassSpatial) {
       const apply = () => {
-        const equal = !!bypassH.checked;
-        for (const b of this.branch) {
-          b.panner.panningModel = equal ? 'equalpower' : 'HRTF';
+        const by = !!bypassSpatial.checked;
+        this.directBypass = by;
+        if (by) {
+          // Disconnect spatial mix from master and unmute original
+          try { this.revDry.disconnect(); } catch(_) {}
+          try { this.revWet.disconnect(); } catch(_) {}
+          try { this.api.muteMainStereo(false); } catch(_) {}
+        } else {
+          // Reconnect spatial mix and mute original stereo
+          try { this.revDry.connect(this.master); } catch(_) {}
+          try { this.revWet.connect(this.master); } catch(_) {}
+          try { this.api.muteMainStereo(true); } catch(_) {}
         }
       };
-      bypassH.addEventListener('change', apply);
+      bypassSpatial.addEventListener('change', apply);
       apply();
     }
 
-    // Reverb wet and bypass
+    // Reverb wet
     const wet = document.getElementById('reverbWet');
     const wetn = document.getElementById('reverbWetn');
     const sync = (from, to) => { try { to.value = from.value; } catch(_) {} };
@@ -305,16 +315,6 @@ class SpatialMixer {
     }
     if (wetn) {
       wetn.addEventListener('input', () => { sync(wetn, wet); setWet(parseFloat(wetn.value)); });
-    }
-
-    const bypassR = document.getElementById('bypassReverb');
-    if (bypassR) {
-      const apply = () => {
-        const by = !!bypassR.checked;
-        if (this.revWet) this.revWet.gain.setTargetAtTime(by ? 0 : Math.max(0, Math.min(1, parseFloat(document.getElementById('reverbWet').value || '0.2'))), this.ctx.currentTime, 0.02);
-      };
-      bypassR.addEventListener('change', apply);
-      apply();
     }
 
     const rtime = document.getElementById('reverbTime');
