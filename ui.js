@@ -738,6 +738,10 @@ async function startAudio() {
     latencyHint: 'playback'
   });
   node = await ResonatorNode.create(context);
+  // Master output bus to allow external spatial mixer to inject stereo
+  const masterOut = context.createGain();
+  masterOut.gain.value = 1;
+  masterOut.connect(context.destination);
   // Route dual outputs through per-path processing (noise path includes optional LPF)
   const noiseGain = context.createGain();
   noiseGain.gain.value = 1;
@@ -751,8 +755,8 @@ async function startAudio() {
   node.connect(noiseLPF, 0, 0);
   noiseLPF.connect(noiseGain);
   node.connect(rainGain, 1, 0);
-  noiseGain.connect(context.destination);
-  rainGain.connect(context.destination);
+  noiseGain.connect(masterOut);
+  rainGain.connect(masterOut);
 
   // Simple output meters using AnalyserNodes (RMS approximation)
   const analyser0 = context.createAnalyser();
@@ -785,13 +789,31 @@ async function startAudio() {
   requestAnimationFrame(updateMeters);
 
   // Expose mixer control hook on window for mixer.html
+  // Preserve original gains for mute/unmute toggling
+  let _origNoiseGain = 1;
+  let _origRainGain = 1;
   window._mixerApi = {
     setNoiseLP(cutoffHz) {
       noiseLPF.frequency.setTargetAtTime(Math.max(50, Math.min(20000, cutoffHz || 20000)), context.currentTime, 0.02);
     },
     getNoiseLP: () => noiseLPF.frequency.value,
     getContext: () => context,
-    getNode: () => node
+    getNode: () => node,
+    // Spatial integration helpers
+    getMasterOut: () => masterOut,
+    getNoiseGain: () => noiseGain,
+    getRainGain: () => rainGain,
+    muteMainStereo(enabled) {
+      if (enabled) {
+        _origNoiseGain = noiseGain.gain.value;
+        _origRainGain = rainGain.gain.value;
+        noiseGain.gain.setTargetAtTime(0, context.currentTime, 0.02);
+        rainGain.gain.setTargetAtTime(0, context.currentTime, 0.02);
+      } else {
+        noiseGain.gain.setTargetAtTime(_origNoiseGain, context.currentTime, 0.02);
+        rainGain.gain.setTargetAtTime(_origRainGain, context.currentTime, 0.02);
+      }
+    }
   };
   console.info('AudioContext started', { sampleRate: context.sampleRate, baseLatency: context.baseLatency });
 
@@ -1064,6 +1086,13 @@ const openRandomizerBtn = document.getElementById('openRandomizerBtn');
 if (openRandomizerBtn) {
   openRandomizerBtn.addEventListener('click', () => {
     window.open('randomizer.html', 'Randomizer');
+  });
+}
+
+const openSpatialBtn = document.getElementById('openSpatialBtn');
+if (openSpatialBtn) {
+  openSpatialBtn.addEventListener('click', () => {
+    window.open('spatial.html', 'Spatial Mixer');
   });
 }
 

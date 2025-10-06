@@ -505,6 +505,7 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     const out1 = outputs[1];
     const out1L = out1 && out1[0];
     const out1R = out1 && out1[1];
+    const out2 = outputs[2]; // optional: per-branch mono taps
 
     const frames = out0L.length;
 
@@ -850,6 +851,12 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         const vR = sumR * amp;
         l1 += vR * this.leftPanGain[b];
         r1 += vR * this.rightPanGain[b];
+
+        // Per-branch mono wet tap (pre-pan): write to out2 channel b if available
+        if (out2 && out2.length > b) {
+          const ch = out2[b];
+          if (ch) ch[i] = vN + vR;
+        }
 
         // For monitoring: sum the per-branch bandpassed exciter per path
         monSum0 += xbpN;
