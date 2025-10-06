@@ -14,7 +14,6 @@
       <header>
         <h1>Exciter Controls</h1>
         <div class="controls">
-          <button id="requestSyncBtn">Sync From Main</button>
           <button id="openMixerBtn">Open Mixer</button>
         </div>
       </header>
@@ -126,6 +125,21 @@
           window.open('mixer.html', 'Mixer');
         });
       }
+    // Floating Randomize triggers main page randomizer
+    (function(){
+      const floater = document.createElement('button');
+      floater.id = 'floatingRandomizeBtn';
+      floater.className = 'floating-randomize';
+      floater.textContent = 'Randomize';
+      document.body.appendChild(floater);
+      floater.addEventListener('click', () => {
+        try {
+          if (window.opener && !window.opener.closed) {
+            window.opener.document.getElementById('randomizeBtn')?.click();
+          }
+        } catch(_) {}
+      });
+    })();
     </script>
   </body>
   </html>

@@ -32,6 +32,7 @@
         </div>
       </section>
     </div>
+<button id="floatingRandomizeBtn" class="floating-randomize">Randomize</button>
     <script>
       // Connect slider to main window mixer API via opener or shared window
       function getMixerApi() {
@@ -93,6 +94,18 @@
         if (tries < 100) setTimeout(retry, 300);
       };
       retry();
+    // Floating Randomize triggers main page randomizer
+    (function(){
+      const floater = document.getElementById('floatingRandomizeBtn');
+      if (!floater) return;
+      floater.addEventListener('click', () => {
+        try {
+          if (window.opener && !window.opener.closed) {
+            window.opener.document.getElementById('randomizeBtn')?.click();
+          }
+        } catch(_) {}
+      });
+    })();
     </script>
   </body>
   </html>

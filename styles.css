@@ -52,3 +52,19 @@ section h2 { font-size: 16px; margin: 12px 0 8px; }
 .rand-row .dep .bias input[type="range"] { width: 140px; }
 
 
+
+/* Floating Randomize button */
+.floating-randomize {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 1000;
+  padding: 10px 14px;
+  background: #22c55e;
+  color: #0b0f14;
+  border: none;
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  font-weight: 600;
+}
+.floating-randomize:hover { background: #16a34a; }

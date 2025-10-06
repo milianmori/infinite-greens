@@ -123,6 +123,10 @@ function setup() {
     if (data.source === 'control') return; // ignore self
     if (data.type === 'state' && data.state) {
       applyFromMain(data.state);
+    } else if (data.type === 'set' && data.id != null) {
+      applyFromMain({ [data.id]: data.value });
+    } else if (data.type === 'setMultiple' && data.values) {
+      applyFromMain(data.values);
     }
   };
 
@@ -151,14 +155,6 @@ function setup() {
 
   // Request initial state from main tab
   bc.postMessage({ type: 'requestState', source: 'control' });
-
-  // Manual sync button
-  const syncBtn = document.getElementById('requestSyncBtn');
-  if (syncBtn) {
-    syncBtn.addEventListener('click', () => {
-      bc.postMessage({ type: 'requestState', source: 'control' });
-    });
-  }
 
   updateValueLabels();
 
