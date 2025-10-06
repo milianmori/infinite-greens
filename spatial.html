@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spatial Mixer (Binaural)</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      /* Page-specific additions */
+      .spatial-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-top: 12px; }
+      .card { padding: 8px; background: #171a21; border: 1px solid #262b36; border-radius: 8px; }
+      canvas#scene { width: 100%; height: 420px; background: #0b0f14; border: 1px solid #1f2633; border-radius: 8px; touch-action: none; }
+      .row { display: grid; grid-template-columns: 1.2fr 1fr; gap: 8px; align-items: center; margin: 6px 0; }
+      .row label { font-size: 12px; color: #cbd5e1; display: flex; justify-content: space-between; }
+      .row input[type="range"], .row input[type="number"] { width: 100%; }
+      .cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+      .cols .row { grid-template-columns: 1fr; }
+      .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Spatial (Binaural HRTF)</h1>
+        <div class="controls">
+          <button id="attachBtn">Attach Spatial Chain</button>
+          <button id="bypassBtn">Bypass</button>
+          <button id="floatingRandomizeBtn" class="floating-randomize">Randomize</button>
+        </div>
+      </header>
+
+      <div class="spatial-grid">
+        <div class="card">
+          <canvas id="scene"></canvas>
+          <div class="grid-2" style="margin-top:8px">
+            <div class="row">
+              <label>Zoom <span id="zoomVal">1.0</span></label>
+              <input id="zoom" type="range" min="0.5" max="3" step="0.01" value="1" />
+            </div>
+            <div class="row">
+              <label>Auto-Move Listener <input id="autoMove" type="checkbox" /></label>
+            </div>
+          </div>
+          <div class="grid-4 cols" style="margin-top:8px">
+            <div class="row"><label>Speed <span id="speedVal">1.0</span></label><input id="speed" type="range" min="0.1" max="5" step="0.1" value="1" /></div>
+            <div class="row"><label>Approach Dist <span id="approachVal">0.5</span></label><input id="approachDist" type="range" min="0.1" max="5" step="0.1" value="0.5" /></div>
+            <div class="row"><label>Pause (s) <span id="pauseVal">0.5</span></label><input id="pauseTime" type="range" min="0" max="5" step="0.1" value="0.5" /></div>
+            <div class="row"><label>Jitter <span id="jitterVal">0.05</span></label><input id="jitter" type="range" min="0" max="0.5" step="0.01" value="0.05" /></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3 style="margin:0 0 8px">Sources (5)</h3>
+          <div id="sources"></div>
+        </div>
+      </div>
+
+      <section style="margin-top:12px" class="card">
+        <h3 style="margin:0 0 8px">Panner Globals</h3>
+        <div class="grid-3">
+          <div class="row"><label>refDistance <span id="refDistanceVal">1.0</span></label><input id="refDistance" type="range" min="0.01" max="10" step="0.01" value="1" /></div>
+          <div class="row"><label>rolloffFactor <span id="rolloffVal">1.0</span></label><input id="rolloffFactor" type="range" min="0.01" max="5" step="0.01" value="1" /></div>
+          <div class="row"><label>maxDistance <span id="maxDistanceVal">25</span></label><input id="maxDistance" type="range" min="1" max="100" step="1" value="25" /></div>
+          <div class="row"><label>coneInner (deg) <span id="coneInVal">60</span></label><input id="coneInner" type="range" min="0" max="360" step="1" value="60" /></div>
+          <div class="row"><label>coneOuter (deg) <span id="coneOutVal">90</span></label><input id="coneOuter" type="range" min="0" max="360" step="1" value="90" /></div>
+          <div class="row"><label>coneOuterGain <span id="coneGainVal">0.3</span></label><input id="coneOuterGain" type="range" min="0" max="1" step="0.01" value="0.3" /></div>
+        </div>
+      </section>
+
+      <section style="margin-top:12px" class="card">
+        <h3 style="margin:0 0 8px">Reverb (World Space)</h3>
+        <div class="grid-3">
+          <div class="row"><label>Reverb Mix (%) <span id="revMixVal">30</span></label><input id="reverbMix" type="range" min="0" max="100" step="1" value="30" /></div>
+          <div class="row"><label>Reverb Gain (dB) <span id="revGainVal">0</span></label><input id="reverbGain" type="range" min="0" max="12" step="0.1" value="0" /></div>
+          <div class="row"><label>Decay / Size (s) <span id="revSizeVal">2.5</span></label><input id="reverbSize" type="range" min="1" max="6" step="0.1" value="2.5" /></div>
+          <div class="row"><label>HF Damping (Hz) <span id="hfDampVal">16000</span></label><input id="hfDamp" type="range" min="1000" max="20000" step="1" value="16000" /></div>
+        </div>
+      </section>
+
+    </div>
+
+    <script type="module" src="spatial.js"></script>
+  </body>
+  </html>
+
+

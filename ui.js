@@ -743,6 +743,9 @@ async function startAudio() {
   noiseGain.gain.value = 1;
   const rainGain = context.createGain();
   rainGain.gain.value = 1;
+  // Master bus for external routing (e.g., spatialization). By default, connects to destination.
+  const masterBus = context.createGain();
+  masterBus.gain.value = 1;
   // Optional LPF for continuous noise path (disabled by default)
   const noiseLPF = context.createBiquadFilter();
   noiseLPF.type = 'lowpass';
@@ -751,8 +754,10 @@ async function startAudio() {
   node.connect(noiseLPF, 0, 0);
   noiseLPF.connect(noiseGain);
   node.connect(rainGain, 1, 0);
-  noiseGain.connect(context.destination);
-  rainGain.connect(context.destination);
+  // Sum to master bus then to destination (external processors can re-route masterBus)
+  noiseGain.connect(masterBus);
+  rainGain.connect(masterBus);
+  masterBus.connect(context.destination);
 
   // Simple output meters using AnalyserNodes (RMS approximation)
   const analyser0 = context.createAnalyser();
@@ -791,7 +796,9 @@ async function startAudio() {
     },
     getNoiseLP: () => noiseLPF.frequency.value,
     getContext: () => context,
-    getNode: () => node
+    getNode: () => node,
+    // Expose master bus so external graphs (spatial) can rewire routing safely
+    getMasterBus: () => masterBus
   };
   console.info('AudioContext started', { sampleRate: context.sampleRate, baseLatency: context.baseLatency });
 
@@ -1064,6 +1071,13 @@ const openRandomizerBtn = document.getElementById('openRandomizerBtn');
 if (openRandomizerBtn) {
   openRandomizerBtn.addEventListener('click', () => {
     window.open('randomizer.html', 'Randomizer');
+  });
+}
+
+const openSpatialBtn = document.getElementById('openSpatialBtn');
+if (openSpatialBtn) {
+  openSpatialBtn.addEventListener('click', () => {
+    window.open('spatial.html', 'Spatial');
   });
 }
 
