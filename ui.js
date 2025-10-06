@@ -994,6 +994,13 @@ if (randomizeBtnEl) randomizeBtnEl.addEventListener('click', () => {
     rootEl.dispatchEvent(new Event('change', { bubbles: true }));
     scaleEl.dispatchEvent(new Event('change', { bubbles: true }));
   }
+  try {
+    // Notify spatial window (if open) to randomize positions and reverb
+    if (typeof BroadcastChannel !== 'undefined') {
+      const sp = new BroadcastChannel('spatial');
+      sp.postMessage({ type: 'randomizeSpatial' });
+    }
+  } catch(_) {}
 });
 const resetBtnEl = document.getElementById('resetBtn');
 if (resetBtnEl) resetBtnEl.addEventListener('click', () => {

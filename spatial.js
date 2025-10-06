@@ -1,4 +1,5 @@
 const MAX_BRANCHES = 32; // browser channel layout limit for AudioWorkletNode output bus
+const GROUP_TAPS = 5; // max mono taps used for spatial panning (configurable)
 const BOUNDS = { xMin: -5, xMax: 5, yMin: -5, yMax: 5, zMin: -2, zMax: 2 };
 const MIN_DIST = 0.5;
 const SMOOTH_MS = 0.35; // 350 ms default
@@ -96,15 +97,51 @@ class SpatialMixer {
     this.stage = document.getElementById('stage');
     this.rowsRoot = document.getElementById('branchRows');
     this.n = 0;
-    this.branch = []; // { pan:AudioParam?, panner:PannerNode, gain:GainNode, pos:{x,y,z} }
+    this.branch = []; // groups: { panner:PannerNode, gain:GainNode }
     this.stageState = { dragging: -1 };
     this.listener = { x:0, y:0, z:0, yawDeg:0 };
     this.rand = cryptoRand;
     this.stereoSum = null;
+    this.splitter = null;
+    this.groupInputs = [];
+    this.groupCount = 0;
     this.revConvolver = null;
     this.revWet = null;
     this.revDry = null;
     this.directBypass = false;
+    this.masterOffset = { x:0, y:0, z:0 };
+  }
+
+  assignGroups() {
+    if (!this.splitter) return;
+    // Disconnect previous wiring into group inputs
+    try {
+      for (let i = 0; i < MAX_BRANCHES; i += 1) {
+        for (const gi of this.groupInputs) { try { this.splitter.disconnect(gi); } catch(_) {} }
+      }
+    } catch(_) {}
+
+    // Build an even distribution across groupCount, randomized
+    const n = this.n;
+    const k = Math.max(1, Math.min(this.groupCount || 1, n));
+    const indices = Array.from({ length: n }, (_, i) => i);
+    // shuffle
+    for (let i = indices.length - 1; i > 0; i -= 1) {
+      const j = Math.floor((typeof this.rand === 'function' ? this.rand() : Math.random()) * (i + 1));
+      const tmp = indices[i]; indices[i] = indices[j]; indices[j] = tmp;
+    }
+    // even chunks
+    const groups = Array.from({ length: k }, () => []);
+    for (let i = 0; i < indices.length; i += 1) groups[i % k].push(indices[i]);
+
+    // Wire splitter outputs into group sum gains
+    for (let g = 0; g < k; g += 1) {
+      const gi = this.groupInputs[g];
+      const members = groups[g];
+      for (const ch of members) {
+        try { this.splitter.connect(gi, ch); } catch(_) {}
+      }
+    }
   }
 
   attach() {
@@ -120,6 +157,7 @@ class SpatialMixer {
     const splitter = this.ctx.createChannelSplitter(maxCh);
     // Connect processor 3rd output (index 2) into splitter
     this.node.connect(splitter, 2, 0);
+    this.splitter = splitter;
 
     // Reverb bus: dry + wet mix into master
     this.revDry = this.ctx.createGain(); this.revDry.gain.value = 1;
@@ -140,11 +178,14 @@ class SpatialMixer {
     this.revDry.connect(this.master);
     this.revWet.connect(this.master);
 
-    // Build per-branch panners
+    // Build group panners (K taps or fewer if fewer branches)
     this.n = Math.min(this.node.parameters.get('nbranches').value | 0, maxCh);
+    this.groupCount = Math.min(GROUP_TAPS, this.n);
     this.branch = [];
+    this.groupInputs = [];
     this.rowsRoot.innerHTML = '';
-    for (let i = 0; i < this.n; i += 1) {
+    for (let k = 0; k < this.groupCount; k += 1) {
+      const sumIn = this.ctx.createGain(); sumIn.gain.value = 1; // sums branches assigned to this group
       const g = this.ctx.createGain(); g.gain.value = 1;
       const p = this.ctx.createPanner();
       p.panningModel = 'HRTF';
@@ -155,20 +196,20 @@ class SpatialMixer {
       p.coneInnerAngle = 60;
       p.coneOuterAngle = 90;
       p.coneOuterGain = 0.3;
-      splitter.connect(p, i);
+      sumIn.connect(p);
       p.connect(g);
       g.connect(this.stereoSum);
-      // Default position
       p.positionX.value = 0; p.positionY.value = 0; p.positionZ.value = 0;
-      // UI row
-      const row = createBranchRow(i);
+      const row = createBranchRow(k);
       this.rowsRoot.appendChild(row);
       const gainEl = row.querySelector('[data-role="gain"]');
       const xEl = row.querySelector('[data-role="x"]');
       const yEl = row.querySelector('[data-role="y"]');
       const zEl = row.querySelector('[data-role="z"]');
       const apply = () => {
-        const pos = enforceMinDist({ x: parseFloat(xEl.value), y: parseFloat(yEl.value), z: parseFloat(zEl.value) }, this.listener);
+        const base = { x: parseFloat(xEl.value), y: parseFloat(yEl.value), z: parseFloat(zEl.value) };
+        const withMaster = { x: base.x + this.masterOffset.x, y: base.y + this.masterOffset.y, z: base.z + this.masterOffset.z };
+        const pos = enforceMinDist(withMaster, this.listener);
         smoothParam(p.positionX, this.ctx, clamp(pos.x, BOUNDS.xMin, BOUNDS.xMax));
         smoothParam(p.positionY, this.ctx, clamp(pos.y, BOUNDS.yMin, BOUNDS.yMax));
         smoothParam(p.positionZ, this.ctx, clamp(pos.z, BOUNDS.zMin, BOUNDS.zMax));
@@ -176,8 +217,12 @@ class SpatialMixer {
         this.drawStage();
       };
       [gainEl, xEl, yEl, zEl].forEach(el => el.addEventListener('input', apply));
-      this.branch.push({ panner: p, gain: g, pos: { x:0, y:0, z:0 } });
+      this.branch.push({ panner: p, gain: g });
+      this.groupInputs.push(sumIn);
     }
+
+    // Initial random-even assignment of branches to groups
+    this.assignGroups();
 
     // Mute the original stereo from main so we only hear spatial sum
     this.api.muteMainStereo(true);
@@ -194,6 +239,8 @@ class SpatialMixer {
   randomizeAll() {
     const seed = document.getElementById('seedInput')?.value || '';
     this.rand = makeRand(seed || undefined);
+    // Re-seed grouping and rewire channels
+    this.assignGroups();
     for (let i = 0; i < this.branch.length; i += 1) {
       const r = this.rand; const fr = typeof r === 'function' ? r : cryptoRand;
       const xr = BOUNDS.xMin + fr() * (BOUNDS.xMax - BOUNDS.xMin);
@@ -206,6 +253,16 @@ class SpatialMixer {
       row.querySelector('[data-role="gain"]').value = String(1);
       row.querySelector('[data-role="x"]').dispatchEvent(new Event('input', { bubbles:true }));
     }
+    // Also randomize reverb settings
+    try {
+      const fr = typeof this.rand === 'function' ? this.rand : cryptoRand;
+      const wet = (fr() * 0.7).toFixed(2); // 0..0.7
+      const time = (0.3 + fr() * 3.5).toFixed(1); // 0.3..3.8s
+      const wetEl = document.getElementById('reverbWet');
+      const timeEl = document.getElementById('reverbTime');
+      if (wetEl) { wetEl.value = wet; wetEl.dispatchEvent(new Event('input', { bubbles:true })); }
+      if (timeEl) { timeEl.value = time; timeEl.dispatchEvent(new Event('input', { bubbles:true })); }
+    } catch(_) {}
   }
 
   wireRoomControls() {
@@ -246,6 +303,29 @@ class SpatialMixer {
     bind('ly', (v) => { this.listener.y = clamp(v, BOUNDS.yMin, BOUNDS.yMax); updateListener(); });
     bind('lz', (v) => { this.listener.z = clamp(v, BOUNDS.zMin, BOUNDS.zMax); updateListener(); });
     bind('yaw', (v) => { this.listener.yawDeg = v; updateListener(); });
+    // Master position offsets applied additively to all branches
+    const bindM = (id, axis, min, max) => {
+      const el = document.getElementById(id);
+      const nEl = document.getElementById(id + 'n');
+      if (!el) return;
+      const sync = (from, to) => { try { to.value = from.value; } catch(_) {} };
+      const apply = () => {
+        sync(el, nEl);
+        const val = clamp(parseFloat(el.value), min, max);
+        this.masterOffset[axis] = val;
+        // re-apply each branch to take effect smoothly
+        for (let i = 0; i < this.branch.length; i += 1) {
+          const row = this.rowsRoot.children[i];
+          row.querySelector('[data-role="x"]').dispatchEvent(new Event('input', { bubbles:true }));
+        }
+      };
+      el.addEventListener('input', apply);
+      if (nEl) nEl.addEventListener('input', () => { sync(nEl, el); apply(); });
+      apply();
+    };
+    bindM('mx', 'x', BOUNDS.xMin, BOUNDS.xMax);
+    bindM('my', 'y', BOUNDS.yMin, BOUNDS.yMax);
+    bindM('mz', 'z', BOUNDS.zMin, BOUNDS.zMax);
 
     const bindP = (id, fn) => {
       const el = document.getElementById(id);
@@ -430,5 +510,18 @@ document.getElementById('attachBtn').addEventListener('click', () => {
 document.getElementById('randomAllBtn').addEventListener('click', () => mixer.randomizeAll());
 
 window.addEventListener('beforeunload', () => mixer.detach());
+
+// Listen for randomize trigger from main window
+try {
+  if (typeof BroadcastChannel !== 'undefined') {
+    const ch = new BroadcastChannel('spatial');
+    ch.onmessage = (event) => {
+      const data = event.data || {};
+      if (data.type === 'randomizeSpatial') {
+        try { mixer.randomizeAll(); } catch(_) {}
+      }
+    };
+  }
+} catch(_) {}
 
 
