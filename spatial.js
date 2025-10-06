@@ -98,18 +98,126 @@ class SpatialMixer {
     this.rowsRoot = document.getElementById('branchRows');
     this.n = 0;
     this.branch = []; // groups: { panner:PannerNode, gain:GainNode }
-    this.stageState = { dragging: -1 };
+    this.stageState = { dragging: -1, orbiting: false, lastX: 0, lastY: 0 };
     this.listener = { x:0, y:0, z:0, yawDeg:0 };
     this.rand = cryptoRand;
-    this.stereoSum = null;
     this.splitter = null;
     this.groupInputs = [];
     this.groupCount = 0;
     this.revConvolver = null;
     this.revWet = null;
+    this.revBoost = null;
     this.revDry = null;
     this.directBypass = false;
     this.masterOffset = { x:0, y:0, z:0 };
+    this.sendWet = [];
+    this.revNear = 0.7; // distance at which reverb starts increasing
+    this.revFar = 12;   // distance at which reverb is maxed
+    this.revCurve = 1.2; // curve exponent for wetness progression
+    // 3D view state (orbit camera)
+    this.view3D = {
+      enabled: true,
+      yawDeg: -35,    // horizontal orbit angle
+      pitchDeg: 20,   // vertical orbit angle
+      distance: 12,   // camera distance from center
+      center: { x: 0, y: 0, z: 0 }
+    };
+    // Auto navigation state
+    this.auto = {
+      enabled: false,
+      speed: 1,            // units per second
+      approach: 0.5,       // arrival radius
+      dwellSec: 0.3,       // pause at target
+      yaw: true,           // auto face direction
+      yawRateDeg: 120,     // deg per second
+      targetIndex: -1,
+      visited: new Set(),
+      dwellUntil: 0,
+      rafId: 0,
+      lastTsMs: 0
+    };
+  }
+
+  // Update world bounds (symmetric around 0) and refresh UI/scene
+  setWorldSize(xyHalf, zHalf) {
+    const safeXY = Math.max(0.5, Math.min(50, xyHalf || 5));
+    const safeZ = Math.max(0.1, Math.min(20, zHalf || 2));
+    BOUNDS.xMin = -safeXY; BOUNDS.xMax = safeXY;
+    BOUNDS.yMin = -safeXY; BOUNDS.yMax = safeXY;
+    BOUNDS.zMin = -safeZ;  BOUNDS.zMax = safeZ;
+
+    // Update label
+    const bl = document.getElementById('boundsLabel');
+    if (bl) bl.textContent = `Bounds x,y [${BOUNDS.xMin},${BOUNDS.xMax}] z [${BOUNDS.zMin},${BOUNDS.zMax}]`;
+
+    // Sync world controls to clamped values
+    const wxy = document.getElementById('worldXY');
+    const wxyn = document.getElementById('worldXYn');
+    const wz = document.getElementById('worldZ');
+    const wzn = document.getElementById('worldZn');
+    const sync = (from, to) => { try { to.value = from.value; } catch(_) {} };
+    if (wxy) { wxy.value = String(safeXY); if (wxyn) sync(wxy, wxyn); }
+    if (wz) { wz.value = String(safeZ); if (wzn) sync(wz, wzn); }
+
+    // Update listener slider ranges and clamp values
+    const setRange = (id, min, max) => {
+      const el = document.getElementById(id);
+      const nEl = document.getElementById(id + 'n');
+      if (el) { el.min = String(min); el.max = String(max); el.value = String(clamp(parseFloat(el.value || '0'), min, max)); }
+      if (nEl) { nEl.min = String(min); nEl.max = String(max); nEl.value = String(clamp(parseFloat(nEl.value || '0'), min, max)); }
+    };
+    setRange('lx', BOUNDS.xMin, BOUNDS.xMax);
+    setRange('ly', BOUNDS.yMin, BOUNDS.yMax);
+    setRange('lz', BOUNDS.zMin, BOUNDS.zMax);
+    setRange('mx', BOUNDS.xMin, BOUNDS.xMax);
+    setRange('my', BOUNDS.yMin, BOUNDS.yMax);
+    setRange('mz', BOUNDS.zMin, BOUNDS.zMax);
+
+    // Clamp current listener and master offset state and apply to audio
+    this.listener.x = clamp(this.listener.x, BOUNDS.xMin, BOUNDS.xMax);
+    this.listener.y = clamp(this.listener.y, BOUNDS.yMin, BOUNDS.yMax);
+    this.listener.z = clamp(this.listener.z, BOUNDS.zMin, BOUNDS.zMax);
+    this.masterOffset.x = clamp(this.masterOffset.x, BOUNDS.xMin, BOUNDS.xMax);
+    this.masterOffset.y = clamp(this.masterOffset.y, BOUNDS.yMin, BOUNDS.yMax);
+    this.masterOffset.z = clamp(this.masterOffset.z, BOUNDS.zMin, BOUNDS.zMax);
+
+    // Update branch row slider ranges and re-apply positions
+    for (let i = 0; i < this.rowsRoot.children.length; i += 1) {
+      const row = this.rowsRoot.children[i];
+      const xEl = row.querySelector('[data-role="x"]');
+      const yEl = row.querySelector('[data-role="y"]');
+      const zEl = row.querySelector('[data-role="z"]');
+      if (xEl) { xEl.min = String(BOUNDS.xMin); xEl.max = String(BOUNDS.xMax); xEl.value = String(clamp(parseFloat(xEl.value || '0'), BOUNDS.xMin, BOUNDS.xMax)); }
+      if (yEl) { yEl.min = String(BOUNDS.yMin); yEl.max = String(BOUNDS.yMax); yEl.value = String(clamp(parseFloat(yEl.value || '0'), BOUNDS.yMin, BOUNDS.yMax)); }
+      if (zEl) { zEl.min = String(BOUNDS.zMin); zEl.max = String(BOUNDS.zMax); zEl.value = String(clamp(parseFloat(zEl.value || '0'), BOUNDS.zMin, BOUNDS.zMax)); }
+      // Trigger re-apply with smoothing and redraw
+      if (xEl) xEl.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    // Redraw grid and update listener
+    this.updateAudioListener();
+    this.drawStage();
+  }
+
+  updateAudioListener() {
+    const o = this.listener;
+    const f = (deg) => deg * Math.PI / 180;
+    const yaw = f(o.yawDeg);
+    const fx = Math.cos(yaw), fy = Math.sin(yaw);
+    try {
+      const lp = this.ctx.listener;
+      lp.positionX.setTargetAtTime(o.x, this.ctx.currentTime, 0.02);
+      lp.positionY.setTargetAtTime(o.y, this.ctx.currentTime, 0.02);
+      lp.positionZ.setTargetAtTime(o.z, this.ctx.currentTime, 0.02);
+      lp.forwardX.setTargetAtTime(fx, this.ctx.currentTime, 0.02);
+      lp.forwardY.setTargetAtTime(0, this.ctx.currentTime, 0.02);
+      lp.forwardZ.setTargetAtTime(-fy, this.ctx.currentTime, 0.02);
+      lp.upX.setTargetAtTime(0, this.ctx.currentTime, 0.02);
+      lp.upY.setTargetAtTime(1, this.ctx.currentTime, 0.02);
+      lp.upZ.setTargetAtTime(0, this.ctx.currentTime, 0.02);
+    } catch(_) {}
+    this.updateReverbSends();
+    this.drawStage();
   }
 
   assignGroups() {
@@ -167,13 +275,10 @@ class SpatialMixer {
     // Procedurally build a basic IR so there's sound without loading files
     this.revConvolver.buffer = buildSimpleIR(this.ctx, 2.3);
 
-    this.stereoSum = this.ctx.createGain();
-    this.stereoSum.channelCount = 2;
-    this.stereoSum.gain.value = 1;
-    // Split stereo sum to dry path and wet path
-    this.stereoSum.connect(this.revDry);
-    this.stereoSum.connect(this.revConvolver);
-    this.revConvolver.connect(this.revWet);
+    // Insert boost stage on wet path (only affects reverb signal)
+    this.revBoost = this.ctx.createGain(); this.revBoost.gain.value = 1;
+    this.revConvolver.connect(this.revBoost);
+    this.revBoost.connect(this.revWet);
     // Mix to master (default: spatial active)
     this.revDry.connect(this.master);
     this.revWet.connect(this.master);
@@ -183,6 +288,7 @@ class SpatialMixer {
     this.groupCount = Math.min(GROUP_TAPS, this.n);
     this.branch = [];
     this.groupInputs = [];
+    this.sendWet = [];
     this.rowsRoot.innerHTML = '';
     for (let k = 0; k < this.groupCount; k += 1) {
       const sumIn = this.ctx.createGain(); sumIn.gain.value = 1; // sums branches assigned to this group
@@ -198,7 +304,13 @@ class SpatialMixer {
       p.coneOuterGain = 0.3;
       sumIn.connect(p);
       p.connect(g);
-      g.connect(this.stereoSum);
+      // Per-group routing: direct to dry bus, distance-based send to wet bus
+      try { g.connect(this.revDry); } catch(_) {}
+      const wetSend = this.ctx.createGain();
+      wetSend.gain.value = 0; // will be driven by distance
+      try { g.connect(wetSend); } catch(_) {}
+      try { wetSend.connect(this.revConvolver); } catch(_) {}
+      this.sendWet.push(wetSend);
       p.positionX.value = 0; p.positionY.value = 0; p.positionZ.value = 0;
       const row = createBranchRow(k);
       this.rowsRoot.appendChild(row);
@@ -214,6 +326,7 @@ class SpatialMixer {
         smoothParam(p.positionY, this.ctx, clamp(pos.y, BOUNDS.yMin, BOUNDS.yMax));
         smoothParam(p.positionZ, this.ctx, clamp(pos.z, BOUNDS.zMin, BOUNDS.zMax));
         smoothParam(g.gain, this.ctx, Math.max(0, Math.min(1, parseFloat(gainEl.value))));
+        this.updateReverbSends();
         this.drawStage();
       };
       [gainEl, xEl, yEl, zEl].forEach(el => el.addEventListener('input', apply));
@@ -228,7 +341,9 @@ class SpatialMixer {
     this.api.muteMainStereo(true);
     this.setupStage();
     this.wireRoomControls();
+    this.wireViewZoom();
     this.wireBypassAndReverb();
+    this.wireAutoControls();
     this.drawStage();
   }
 
@@ -279,39 +394,31 @@ class SpatialMixer {
       handler();
     };
 
-    const updateListener = () => {
-      const o = this.listener;
-      const f = (deg) => deg * Math.PI / 180;
-      const yaw = f(o.yawDeg);
-      const fx = Math.cos(yaw), fy = Math.sin(yaw);
-      try {
-        const lp = this.ctx.listener;
-        lp.positionX.setTargetAtTime(o.x, this.ctx.currentTime, 0.02);
-        lp.positionY.setTargetAtTime(o.y, this.ctx.currentTime, 0.02);
-        lp.positionZ.setTargetAtTime(o.z, this.ctx.currentTime, 0.02);
-        lp.forwardX.setTargetAtTime(fx, this.ctx.currentTime, 0.02);
-        lp.forwardY.setTargetAtTime(0, this.ctx.currentTime, 0.02);
-        lp.forwardZ.setTargetAtTime(-fy, this.ctx.currentTime, 0.02);
-        lp.upX.setTargetAtTime(0, this.ctx.currentTime, 0.02);
-        lp.upY.setTargetAtTime(1, this.ctx.currentTime, 0.02);
-        lp.upZ.setTargetAtTime(0, this.ctx.currentTime, 0.02);
-      } catch(_) {}
-      this.drawStage();
-    };
+    const updateListener = () => this.updateAudioListener();
 
-    bind('lx', (v) => { this.listener.x = clamp(v, BOUNDS.xMin, BOUNDS.xMax); updateListener(); });
-    bind('ly', (v) => { this.listener.y = clamp(v, BOUNDS.yMin, BOUNDS.yMax); updateListener(); });
-    bind('lz', (v) => { this.listener.z = clamp(v, BOUNDS.zMin, BOUNDS.zMax); updateListener(); });
-    bind('yaw', (v) => { this.listener.yawDeg = v; updateListener(); });
+    // World size bindings
+    bind('worldXY', (v) => { this.setWorldSize(v, (BOUNDS.zMax - BOUNDS.zMin) * 0.5); });
+    bind('worldZ', (v) => { this.setWorldSize((BOUNDS.xMax - BOUNDS.xMin) * 0.5, v); });
+
+    bind('lx', (v) => { this.listener.x = clamp(v, BOUNDS.xMin, BOUNDS.xMax); this.auto.enabled && this.stopAuto(); updateListener(); });
+    bind('ly', (v) => { this.listener.y = clamp(v, BOUNDS.yMin, BOUNDS.yMax); this.auto.enabled && this.stopAuto(); updateListener(); });
+    bind('lz', (v) => { this.listener.z = clamp(v, BOUNDS.zMin, BOUNDS.zMax); this.auto.enabled && this.stopAuto(); updateListener(); });
+    bind('yaw', (v) => { this.listener.yawDeg = v; this.auto.yaw = false; updateListener(); });
     // Master position offsets applied additively to all branches
-    const bindM = (id, axis, min, max) => {
+    const bindM = (id, axis) => {
       const el = document.getElementById(id);
       const nEl = document.getElementById(id + 'n');
       if (!el) return;
       const sync = (from, to) => { try { to.value = from.value; } catch(_) {} };
       const apply = () => {
         sync(el, nEl);
-        const val = clamp(parseFloat(el.value), min, max);
+        // Clamp using current bounds at apply-time so world size changes are respected
+        const boundsMin = axis === 'z' ? BOUNDS.zMin : (axis === 'x' ? BOUNDS.xMin : BOUNDS.yMin);
+        const boundsMax = axis === 'z' ? BOUNDS.zMax : (axis === 'x' ? BOUNDS.xMax : BOUNDS.yMax);
+        // Ensure inputs reflect current bounds
+        el.min = String(boundsMin); el.max = String(boundsMax);
+        if (nEl) { nEl.min = String(boundsMin); nEl.max = String(boundsMax); }
+        const val = clamp(parseFloat(el.value), boundsMin, boundsMax);
         this.masterOffset[axis] = val;
         // re-apply each branch to take effect smoothly
         for (let i = 0; i < this.branch.length; i += 1) {
@@ -323,19 +430,23 @@ class SpatialMixer {
       if (nEl) nEl.addEventListener('input', () => { sync(nEl, el); apply(); });
       apply();
     };
-    bindM('mx', 'x', BOUNDS.xMin, BOUNDS.xMax);
-    bindM('my', 'y', BOUNDS.yMin, BOUNDS.yMax);
-    bindM('mz', 'z', BOUNDS.zMin, BOUNDS.zMax);
+    bindM('mx', 'x');
+    bindM('my', 'y');
+    bindM('mz', 'z');
 
     const bindP = (id, fn) => {
       const el = document.getElementById(id);
       if (!el) return;
-      const handler = () => {
-        const v = parseFloat(el.value);
-        for (const b of this.branch) fn(b.panner, v);
-      };
-      el.addEventListener('input', handler);
-      handler();
+      // Pair with the number input in the same row (IDs are not always `${id}n`)
+      const nEl = el.parentElement ? el.parentElement.querySelector('input[type="number"]') : null;
+      const sync = (from, to) => { try { to.value = from.value; } catch(_) {} };
+      const applyVal = (v) => { for (const b of this.branch) fn(b.panner, v); };
+      const onSlider = () => { if (nEl) sync(el, nEl); applyVal(parseFloat(el.value)); };
+      el.addEventListener('input', onSlider);
+      if (nEl) {
+        nEl.addEventListener('input', () => { sync(nEl, el); applyVal(parseFloat(nEl.value)); });
+      }
+      onSlider();
     };
     bindP('refDistance', (p, v) => p.refDistance = Math.max(0.01, v));
     bindP('rolloffFactor', (p, v) => p.rolloffFactor = Math.max(0, v));
@@ -359,6 +470,177 @@ class SpatialMixer {
       const vals = { refDistance:1, rolloffFactor:0.3, maxDistance:50, coneInner:180, coneOuter:220, coneOuterGain:0.9 };
       for (const [k,v] of Object.entries(vals)) { const el = document.getElementById(k); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles:true })); }
     });
+  }
+
+  wireViewZoom() {
+    const el = document.getElementById('viewZoom');
+    const nEl = document.getElementById('viewZoomn');
+    if (!el) return;
+    const sync = (from, to) => { try { to.value = from.value; } catch(_) {} };
+    const apply = (v) => {
+      const val = Math.max(2, Math.min(100, isFinite(v) ? v : 12));
+      this.view3D.distance = val;
+      this.drawStage();
+    };
+    el.addEventListener('input', () => { if (nEl) sync(el, nEl); apply(parseFloat(el.value)); });
+    if (nEl) nEl.addEventListener('input', () => { sync(nEl, el); apply(parseFloat(nEl.value)); });
+    // initialize
+    apply(parseFloat(el.value || '12'));
+  }
+
+  getBranchPositions() {
+    const positions = [];
+    for (let i = 0; i < this.branch.length; i += 1) {
+      const p = this.branch[i].panner;
+      positions.push({ x: p.positionX.value, y: p.positionY.value, z: p.positionZ.value, index: i });
+    }
+    return positions;
+  }
+
+  pickNearest(from, excludeSet) {
+    const ps = this.getBranchPositions();
+    let bestIdx = -1, bestD = Infinity;
+    for (let i = 0; i < ps.length; i += 1) {
+      if (excludeSet && excludeSet.has(ps[i].index)) continue;
+      const d = distance3(from, ps[i]);
+      if (d < bestD) { bestD = d; bestIdx = ps[i].index; }
+    }
+    return bestIdx;
+  }
+
+  wireAutoControls() {
+    const sync = (from, to) => { try { to.value = from.value; } catch(_) {} };
+    const bindToggle = (id, cb) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const handler = () => cb(!!el.checked);
+      el.addEventListener('change', handler);
+      handler();
+    };
+    const bindNum = (id, cb) => {
+      const el = document.getElementById(id);
+      const nEl = document.getElementById(id + 'n');
+      if (!el) return;
+      const handler = () => { sync(el, nEl); cb(parseFloat(el.value)); };
+      el.addEventListener('input', handler);
+      if (nEl) nEl.addEventListener('input', () => { sync(nEl, el); cb(parseFloat(nEl.value)); });
+      handler();
+    };
+
+    bindToggle('autoEnable', (on) => {
+      this.auto.enabled = on;
+      if (on) {
+        // Start from center as requested
+        this.listener.x = 0; this.listener.y = 0; this.listener.z = 0;
+        this.updateAudioListener();
+        this.auto.visited = new Set();
+        this.auto.targetIndex = -1;
+        this.auto.dwellUntil = 0;
+        this.startAuto();
+      } else {
+        this.stopAuto();
+      }
+    });
+    bindNum('autoSpeed', (v) => { this.auto.speed = Math.max(0.01, v); });
+    bindNum('autoApproach', (v) => { this.auto.approach = clamp(v, 0.01, 10); });
+    bindNum('autoDwell', (v) => { this.auto.dwellSec = Math.max(0, v); });
+    bindToggle('autoYaw', (on) => { this.auto.yaw = !!on; });
+    bindNum('autoYawRate', (v) => { this.auto.yawRateDeg = Math.max(0, v); });
+  }
+
+  updateReverbSends() {
+    if (!this.sendWet || !this.branch || !this.ctx) return;
+    const near = Math.max(0, this.revNear);
+    const far = Math.max(near + 0.001, this.revFar);
+    for (let i = 0; i < this.branch.length; i += 1) {
+      const p = this.branch[i].panner;
+      const d = distance3({ x: p.positionX.value, y: p.positionY.value, z: p.positionZ.value }, this.listener);
+      let t = (d - near) / (far - near);
+      t = Math.max(0, Math.min(1, t));
+      // Curve control (curve>1 keeps it more direct when close)
+      const curve = this.revCurve || 1.2;
+      const wetAmt = Math.pow(t, curve);
+      const send = this.sendWet[i];
+      if (send && send.gain) {
+        smoothParam(send.gain, this.ctx, wetAmt, 120); // 120ms smoothing
+      }
+    }
+  }
+
+  startAuto() {
+    if (this.auto.rafId) cancelAnimationFrame(this.auto.rafId);
+    this.auto.lastTsMs = performance.now();
+    const tick = (ts) => {
+      const dt = Math.max(0, (ts - this.auto.lastTsMs) / 1000);
+      this.auto.lastTsMs = ts;
+      if (this.auto.enabled) this.stepAuto(dt, ts);
+      this.auto.rafId = this.auto.enabled ? requestAnimationFrame(tick) : 0;
+    };
+    this.auto.rafId = requestAnimationFrame(tick);
+  }
+
+  stopAuto() {
+    this.auto.enabled = false;
+    if (this.auto.rafId) cancelAnimationFrame(this.auto.rafId);
+    this.auto.rafId = 0;
+  }
+
+  stepAuto(dt, nowMs) {
+    if (!this.branch || this.branch.length === 0) return;
+    // Pick a target if none
+    if (this.auto.targetIndex < 0 || this.auto.targetIndex >= this.branch.length) {
+      const startPos = { x: this.listener.x, y: this.listener.y, z: this.listener.z };
+      this.auto.targetIndex = this.pickNearest(startPos, this.auto.visited);
+      this.auto.dwellUntil = 0;
+    }
+    const p = this.branch[this.auto.targetIndex]?.panner;
+    if (!p) return;
+    const target = { x: p.positionX.value, y: p.positionY.value, z: p.positionZ.value };
+    const pos = { x: this.listener.x, y: this.listener.y, z: this.listener.z };
+    const dx = target.x - pos.x, dy = target.y - pos.y, dz = target.z - pos.z;
+    const dist = Math.hypot(dx, dy, dz);
+
+    if (dist <= this.auto.approach) {
+      if (!this.auto.dwellUntil) {
+        this.auto.dwellUntil = nowMs + this.auto.dwellSec * 1000;
+      }
+      if (nowMs >= this.auto.dwellUntil) {
+        this.auto.visited.add(this.auto.targetIndex);
+        if (this.auto.visited.size >= this.branch.length) this.auto.visited.clear();
+        // Next nearest from current position
+        this.auto.targetIndex = this.pickNearest(pos, this.auto.visited);
+        this.auto.dwellUntil = 0;
+      }
+      // no movement during dwell
+      return;
+    }
+
+    // Move towards target at constant speed
+    const speed = this.auto.speed;
+    const nx = dx / (dist || 1), ny = dy / (dist || 1), nz = dz / (dist || 1);
+    const step = speed * dt;
+    const newPos = {
+      x: clamp(pos.x + nx * step, BOUNDS.xMin, BOUNDS.xMax),
+      y: clamp(pos.y + ny * step, BOUNDS.yMin, BOUNDS.yMax),
+      z: clamp(pos.z + nz * step, BOUNDS.zMin, BOUNDS.zMax)
+    };
+    this.listener.x = newPos.x; this.listener.y = newPos.y; this.listener.z = newPos.z;
+
+    // Auto yaw towards motion direction
+    if (this.auto.yaw) {
+      const desiredYawRad = Math.atan2(-nz, nx); // matches drawStage forward
+      let desiredDeg = desiredYawRad * 180 / Math.PI;
+      let cur = this.listener.yawDeg;
+      // shortest angular difference
+      let diff = ((desiredDeg - cur + 540) % 360) - 180;
+      const maxStep = this.auto.yawRateDeg * dt;
+      if (Math.abs(diff) <= maxStep) cur = desiredDeg; else cur += Math.sign(diff) * maxStep;
+      // normalize
+      cur = ((cur + 180) % 360) - 180;
+      this.listener.yawDeg = cur;
+    }
+
+    this.updateAudioListener();
   }
 
   wireBypassAndReverb() {
@@ -412,6 +694,36 @@ class SpatialMixer {
     if (rtimen) {
       rtimen.addEventListener('input', () => { sync(rtimen, rtime); setTime(parseFloat(rtimen.value)); });
     }
+
+    // Reverb distance/curve parameters
+    const bindParam = (id, cb) => {
+      const el = document.getElementById(id);
+      const nEl = document.getElementById(id + 'n');
+      if (!el) return;
+      const handler = () => { try { if (nEl) nEl.value = el.value; } catch(_){} cb(parseFloat(el.value)); };
+      el.addEventListener('input', handler);
+      if (nEl) nEl.addEventListener('input', () => { try { el.value = nEl.value; } catch(_) {} cb(parseFloat(nEl.value)); });
+      handler();
+    };
+    bindParam('reverbNear', (v) => { this.revNear = Math.max(0, v); this.updateReverbSends(); });
+    bindParam('reverbFar', (v) => { this.revFar = Math.max(0.01, v); this.updateReverbSends(); });
+    bindParam('reverbCurve', (v) => { this.revCurve = Math.max(0.1, v); this.updateReverbSends(); });
+
+    // Reverb gain (dB boost on wet only)
+    const rg = document.getElementById('reverbGainDb');
+    const rgn = document.getElementById('reverbGainDbn');
+    const setBoost = (db) => {
+      const clamped = Math.max(0, Math.min(12, isFinite(db) ? db : 0));
+      const lin = Math.pow(10, clamped / 20); // 0..12 dB → 1..~3.98
+      if (this.revBoost) this.revBoost.gain.setTargetAtTime(lin, this.ctx.currentTime, 0.02);
+    };
+    if (rg) {
+      rg.addEventListener('input', () => { try { if (rgn) rgn.value = rg.value; } catch(_) {}; setBoost(parseFloat(rg.value)); });
+      rg.dispatchEvent(new Event('input', { bubbles:true }));
+    }
+    if (rgn) {
+      rgn.addEventListener('input', () => { try { if (rg) rg.value = rgn.value; } catch(_) {}; setBoost(parseFloat(rgn.value)); });
+    }
   }
 
   setupStage() {
@@ -436,6 +748,49 @@ class SpatialMixer {
       const py = ((-ny) * 0.5 + 0.5) * h;
       return { x: px, y: py };
     };
+    // 3D projection helper: world (x,y,z) -> screen {x,y,behind:boolean}
+    this.project3D = (x, y, z) => {
+      const v = this.view3D;
+      // camera spherical to cartesian around center
+      const yaw = v.yawDeg * Math.PI / 180;
+      const pitch = v.pitchDeg * Math.PI / 180;
+      const cosPitch = Math.cos(pitch);
+      const sinPitch = Math.sin(pitch);
+      const cosYaw = Math.cos(yaw);
+      const sinYaw = Math.sin(yaw);
+      const cx = v.center.x + v.distance * cosPitch * sinYaw;
+      const cy = v.center.y + v.distance * sinPitch;
+      const cz = v.center.z + v.distance * cosPitch * cosYaw;
+      // camera basis
+      const fx = v.center.x - cx;
+      const fy = v.center.y - cy;
+      const fz = v.center.z - cz;
+      const fLen = Math.hypot(fx, fy, fz) || 1;
+      const fX = fx / fLen, fY = fy / fLen, fZ = fz / fLen; // forward
+      const upXw = 0, upYw = 1, upZw = 0;
+      // right = normalize(cross(forward, upWorld))
+      const rXn = fY * upZw - fZ * upYw;
+      const rYn = fZ * upXw - fX * upZw;
+      const rZn = fX * upYw - fY * upXw;
+      const rLen = Math.hypot(rXn, rYn, rZn) || 1;
+      const rX = rXn / rLen, rY = rYn / rLen, rZ = rZn / rLen; // right
+      // up = cross(right, forward)
+      const uX = rY * fZ - rZ * fY;
+      const uY = rZ * fX - rX * fZ;
+      const uZ = rX * fY - rY * fX;
+      // point relative to camera
+      const dx = x - cx, dy = y - cy, dz = z - cz;
+      const camX = dx * rX + dy * rY + dz * rZ;
+      const camY = dx * uX + dy * uY + dz * uZ;
+      const camZ = dx * fX + dy * fY + dz * fZ; // depth along forward
+      const near = 0.1;
+      const fov = 60 * Math.PI / 180; // 60 deg
+      const scale = (0.5 * c.height) / Math.tan(fov / 2);
+      const behind = camZ <= near;
+      const px = c.width * 0.5 + (camX * scale) / Math.max(near, camZ);
+      const py = c.height * 0.5 - (camY * scale) / Math.max(near, camZ);
+      return { x: px, y: py, behind };
+    };
     const pick = (px, py) => {
       const pt = toWorld(px, py);
       for (let i = 0; i < this.branch.length; i += 1) {
@@ -450,14 +805,31 @@ class SpatialMixer {
       const rect = c.getBoundingClientRect();
       const x = (e.clientX - rect.left) * (window.devicePixelRatio || 1);
       const y = (e.clientY - rect.top) * (window.devicePixelRatio || 1);
-      this.stageState.dragging = pick(x, y);
+      if (e.metaKey) {
+        this.stageState.orbiting = true;
+        this.stageState.lastX = x;
+        this.stageState.lastY = y;
+      } else {
+        this.stageState.dragging = pick(x, y);
+      }
       e.preventDefault();
     };
     const onMove = (e) => {
-      if (this.stageState.dragging < 0) return;
       const rect = c.getBoundingClientRect();
       const sx = (e.clientX - rect.left) * (window.devicePixelRatio || 1);
       const sy = (e.clientY - rect.top) * (window.devicePixelRatio || 1);
+      if (this.stageState.orbiting) {
+        const dx = sx - this.stageState.lastX;
+        const dy = sy - this.stageState.lastY;
+        this.stageState.lastX = sx;
+        this.stageState.lastY = sy;
+        const v = this.view3D;
+        v.yawDeg += dx * 0.2;
+        v.pitchDeg = Math.max(-80, Math.min(80, v.pitchDeg + dy * 0.2));
+        this.drawStage();
+        return;
+      }
+      if (this.stageState.dragging < 0) return;
       const w = toWorld(sx, sy);
       const idx = this.stageState.dragging;
       const row = this.rowsRoot.children[idx];
@@ -465,7 +837,7 @@ class SpatialMixer {
       row.querySelector('[data-role="y"]').value = String(clamp(w.y, BOUNDS.yMin, BOUNDS.yMax).toFixed(2));
       row.querySelector('[data-role="x"]').dispatchEvent(new Event('input', { bubbles:true }));
     };
-    const onUp = () => { this.stageState.dragging = -1; };
+    const onUp = () => { this.stageState.dragging = -1; this.stageState.orbiting = false; };
     c.addEventListener('pointerdown', onDown);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -474,29 +846,59 @@ class SpatialMixer {
 
   drawStage() {
     const c = this.stage; if (!c) return; const ctx = c.getContext('2d');
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
     ctx.resetTransform();
     ctx.scale(1, 1);
     ctx.clearRect(0, 0, c.width, c.height);
-    // grid
-    ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 1;
-    for (let i = -5; i <= 5; i += 1) {
-      const p1 = this.toScreen(i, -5), p2 = this.toScreen(i, 5);
-      ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-      const q1 = this.toScreen(-5, i), q2 = this.toScreen(5, i);
-      ctx.beginPath(); ctx.moveTo(q1.x, q1.y); ctx.lineTo(q2.x, q2.y); ctx.stroke();
+
+    // draw 3D grid on XY and XZ planes within bounds
+    const drawLine3 = (a, b, color) => {
+      const pa = this.project3D(a.x, a.y, a.z);
+      const pb = this.project3D(b.x, b.y, b.z);
+      if (pa.behind && pb.behind) return;
+      ctx.strokeStyle = color; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+    };
+    // grid lines based on dynamic bounds (10 divisions per axis)
+    const xMin = BOUNDS.xMin, xMax = BOUNDS.xMax;
+    const yMin = BOUNDS.yMin, yMax = BOUNDS.yMax;
+    const zMin = BOUNDS.zMin, zMax = BOUNDS.zMax;
+    const xStep = (xMax - xMin) / 10;
+    const yStep = (yMax - yMin) / 10;
+    const zStep = (zMax - zMin) / 10;
+    for (let xi = 0; xi <= 10; xi += 1) {
+      const x = xMin + xi * xStep;
+      // XY plane (z=0)
+      drawLine3({x, y:yMin, z:0}, {x, y:yMax, z:0}, '#1f2937');
+      // XZ plane (y=0)
+      drawLine3({x, y:0, z:zMin}, {x, y:0, z:zMax}, '#0b1220');
     }
+    for (let yi = 0; yi <= 10; yi += 1) {
+      const y = yMin + yi * yStep;
+      // XY plane (z=0)
+      drawLine3({x:xMin, y, z:0}, {x:xMax, y, z:0}, '#1f2937');
+    }
+    for (let zi = 0; zi <= 10; zi += 1) {
+      const z = zMin + zi * zStep;
+      // XZ plane (y=0)
+      drawLine3({x:xMin, y:0, z}, {x:xMax, y:0, z}, '#0b1220');
+    }
+    // axes at origin
+    drawLine3({x:xMin, y:0, z:0}, {x:xMax, y:0, z:0}, '#ef4444'); // X - red
+    drawLine3({x:0, y:yMin, z:0}, {x:0, y:yMax, z:0}, '#22c55e'); // Y - green
+    drawLine3({x:0, y:0, z:zMin}, {x:0, y:0, z:zMax}, '#3b82f6'); // Z - blue
+
     // listener
-    const L = this.toScreen(this.listener.x, this.listener.y);
-    ctx.fillStyle = '#22d3ee'; ctx.beginPath(); ctx.arc(L.x, L.y, 6, 0, Math.PI*2); ctx.fill();
-    // orientation
+    const Lp = this.project3D(this.listener.x, this.listener.y, this.listener.z);
+    ctx.fillStyle = '#22d3ee'; ctx.beginPath(); ctx.arc(Lp.x, Lp.y, 6, 0, Math.PI*2); ctx.fill();
+    // orientation (yaw around Y)
     const yaw = this.listener.yawDeg * Math.PI / 180;
-    const fx = Math.cos(yaw), fy = Math.sin(yaw);
-    ctx.strokeStyle = '#22d3ee'; ctx.beginPath(); ctx.moveTo(L.x, L.y); ctx.lineTo(L.x + fx*20, L.y - fy*20); ctx.stroke();
+    const fx = Math.cos(yaw), fz = -Math.sin(yaw);
+    const tip = this.project3D(this.listener.x + fx, this.listener.y, this.listener.z + fz);
+    ctx.strokeStyle = '#22d3ee'; ctx.beginPath(); ctx.moveTo(Lp.x, Lp.y); ctx.lineTo(tip.x, tip.y); ctx.stroke();
     // branches
     for (let i = 0; i < this.branch.length; i += 1) {
       const p = this.branch[i].panner;
-      const s = this.toScreen(p.positionX.value, p.positionY.value);
+      const s = this.project3D(p.positionX.value, p.positionY.value, p.positionZ.value);
       ctx.fillStyle = '#a78bfa'; ctx.beginPath(); ctx.arc(s.x, s.y, 5, 0, Math.PI*2); ctx.fill();
     }
   }
@@ -523,5 +925,22 @@ try {
     };
   }
 } catch(_) {}
+
+
+// Floating Randomize triggers main page randomizer (if available)
+(function(){
+  const floater = document.getElementById('floatingRandomizeBtn');
+  if (!floater) return;
+  floater.addEventListener('click', () => {
+    try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.document.getElementById('randomizeBtn')?.click();
+      } else {
+        // As a fallback, trigger local spatial randomize
+        mixer.randomizeAll();
+      }
+    } catch(_) { try { mixer.randomizeAll(); } catch(_) {} }
+  });
+})();
 
 
