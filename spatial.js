@@ -65,11 +65,13 @@ function buildSimpleIR(ctx, timeSec) {
 function createBranchRow(i) {
   const row = document.createElement('div');
   row.className = 'row';
+  row.style.gridTemplateColumns = '24px 1fr 1fr 1fr 1fr 60px';
   const idx = document.createElement('span'); idx.textContent = String(i + 1); row.appendChild(idx);
   const g = document.createElement('input'); g.type = 'range'; g.min = '0'; g.max = '1'; g.step = '0.001'; g.value = '1'; g.dataset.role = 'gain'; row.appendChild(g);
   const xs = document.createElement('input'); xs.type = 'range'; xs.min = String(BOUNDS.xMin); xs.max = String(BOUNDS.xMax); xs.step = '0.01'; xs.value = '0'; xs.dataset.role = 'x'; row.appendChild(xs);
   const ys = document.createElement('input'); ys.type = 'range'; ys.min = String(BOUNDS.yMin); ys.max = String(BOUNDS.yMax); ys.step = '0.01'; ys.value = '0'; ys.dataset.role = 'y'; row.appendChild(ys);
   const zs = document.createElement('input'); zs.type = 'range'; zs.min = String(BOUNDS.zMin); zs.max = String(BOUNDS.zMax); zs.step = '0.01'; zs.value = '0'; zs.dataset.role = 'z'; row.appendChild(zs);
+  const solo = document.createElement('button'); solo.textContent = 'Solo'; solo.className = 'solo-btn'; solo.dataset.role = 'solo'; row.appendChild(solo);
   return row;
 }
 
@@ -114,6 +116,7 @@ class SpatialMixer {
     this.revNear = 0.7; // distance at which reverb starts increasing
     this.revFar = 12;   // distance at which reverb is maxed
     this.revCurve = 1.2; // curve exponent for wetness progression
+    this.solo = new Set(); // set of soloed branch indices; empty means no solo
     // 3D view state (orbit camera)
     this.view3D = {
       enabled: true,
@@ -318,6 +321,7 @@ class SpatialMixer {
       const xEl = row.querySelector('[data-role="x"]');
       const yEl = row.querySelector('[data-role="y"]');
       const zEl = row.querySelector('[data-role="z"]');
+      const soloBtn = row.querySelector('[data-role="solo"]');
       const apply = () => {
         const base = { x: parseFloat(xEl.value), y: parseFloat(yEl.value), z: parseFloat(zEl.value) };
         const withMaster = { x: base.x + this.masterOffset.x, y: base.y + this.masterOffset.y, z: base.z + this.masterOffset.z };
@@ -325,14 +329,105 @@ class SpatialMixer {
         smoothParam(p.positionX, this.ctx, clamp(pos.x, BOUNDS.xMin, BOUNDS.xMax));
         smoothParam(p.positionY, this.ctx, clamp(pos.y, BOUNDS.yMin, BOUNDS.yMax));
         smoothParam(p.positionZ, this.ctx, clamp(pos.z, BOUNDS.zMin, BOUNDS.zMax));
-        smoothParam(g.gain, this.ctx, Math.max(0, Math.min(1, parseFloat(gainEl.value))));
+        const gainTarget = this.computeBranchGainTarget(k, parseFloat(gainEl.value));
+        smoothParam(g.gain, this.ctx, gainTarget);
         this.updateReverbSends();
         this.drawStage();
       };
       [gainEl, xEl, yEl, zEl].forEach(el => el.addEventListener('input', apply));
+      if (soloBtn) {
+        soloBtn.addEventListener('click', () => {
+          if (this.solo.has(k)) {
+            this.solo.delete(k);
+            soloBtn.classList.remove('active');
+          } else {
+            this.solo.add(k);
+            soloBtn.classList.add('active');
+          }
+          this.applyAllGains();
+          this.updateReverbSends();
+          this.drawStage();
+        });
+      }
       this.branch.push({ panner: p, gain: g });
       this.groupInputs.push(sumIn);
     }
+
+    // Create two discrete mono inputs carrying the noise-path wet signal only
+    // Split node output[0] (noise stereo wet), sum to mono, duplicate, and spatialize
+    try {
+      const noiseSplit = this.ctx.createChannelSplitter(2);
+      this.node.connect(noiseSplit, 0, 0);
+      const nL = this.ctx.createGain(); nL.gain.value = 0.5;
+      const nR = this.ctx.createGain(); nR.gain.value = 0.5;
+      noiseSplit.connect(nL, 0);
+      noiseSplit.connect(nR, 1);
+      const noiseMono = this.ctx.createGain(); noiseMono.gain.value = 1;
+      nL.connect(noiseMono);
+      nR.connect(noiseMono);
+
+      const makeNoiseInput = (source) => {
+        const g = this.ctx.createGain(); g.gain.value = 1;
+        const p = this.ctx.createPanner();
+        p.panningModel = 'HRTF';
+        p.distanceModel = 'inverse';
+        p.refDistance = 1;
+        p.rolloffFactor = 1;
+        p.maxDistance = 25;
+        p.coneInnerAngle = 60;
+        p.coneOuterAngle = 90;
+        p.coneOuterGain = 0.3;
+        try { source.connect(p); } catch(_) {}
+        p.connect(g);
+        try { g.connect(this.revDry); } catch(_) {}
+        const wetSend = this.ctx.createGain(); wetSend.gain.value = 0;
+        try { g.connect(wetSend); } catch(_) {}
+        try { wetSend.connect(this.revConvolver); } catch(_) {}
+        this.sendWet.push(wetSend);
+
+        const idx = this.branch.length;
+        p.positionX.value = 0; p.positionY.value = 0; p.positionZ.value = 0;
+        const row = createBranchRow(idx);
+        this.rowsRoot.appendChild(row);
+        const gainEl = row.querySelector('[data-role="gain"]');
+        const xEl = row.querySelector('[data-role="x"]');
+        const yEl = row.querySelector('[data-role="y"]');
+        const zEl = row.querySelector('[data-role="z"]');
+        const soloBtn = row.querySelector('[data-role="solo"]');
+        const apply = () => {
+          const base = { x: parseFloat(xEl.value), y: parseFloat(yEl.value), z: parseFloat(zEl.value) };
+          const withMaster = { x: base.x + this.masterOffset.x, y: base.y + this.masterOffset.y, z: base.z + this.masterOffset.z };
+          const pos = enforceMinDist(withMaster, this.listener);
+          smoothParam(p.positionX, this.ctx, clamp(pos.x, BOUNDS.xMin, BOUNDS.xMax));
+          smoothParam(p.positionY, this.ctx, clamp(pos.y, BOUNDS.yMin, BOUNDS.yMax));
+          smoothParam(p.positionZ, this.ctx, clamp(pos.z, BOUNDS.zMin, BOUNDS.zMax));
+          const gainTarget = this.computeBranchGainTarget(idx, parseFloat(gainEl.value));
+          smoothParam(g.gain, this.ctx, gainTarget);
+          this.updateReverbSends();
+          this.drawStage();
+        };
+        [gainEl, xEl, yEl, zEl].forEach(el => el.addEventListener('input', apply));
+        if (soloBtn) {
+          soloBtn.addEventListener('click', () => {
+            if (this.solo.has(idx)) {
+              this.solo.delete(idx);
+              soloBtn.classList.remove('active');
+            } else {
+              this.solo.add(idx);
+              soloBtn.classList.add('active');
+            }
+            this.applyAllGains();
+            this.updateReverbSends();
+            this.drawStage();
+          });
+        }
+        this.branch.push({ panner: p, gain: g });
+      };
+
+      // Two discrete inputs from the same noise mono bus
+      makeNoiseInput(noiseMono);
+      makeNoiseInput(noiseMono);
+    } catch(_) {}
 
     // Initial random-even assignment of branches to groups
     this.assignGroups();
@@ -345,6 +440,24 @@ class SpatialMixer {
     this.wireBypassAndReverb();
     this.wireAutoControls();
     this.drawStage();
+  }
+
+  computeBranchGainTarget(index, userGainVal) {
+    const base = Math.max(0, Math.min(1, isFinite(userGainVal) ? userGainVal : 1));
+    if (!this.solo || this.solo.size === 0) return base;
+    return this.solo.has(index) ? base : 0;
+  }
+
+  applyAllGains() {
+    // Re-apply gain of every branch based on current solo state and UI slider values
+    for (let i = 0; i < this.branch.length; i += 1) {
+      const row = this.rowsRoot.children[i];
+      if (!row) continue;
+      const gainEl = row.querySelector('[data-role="gain"]');
+      const target = this.computeBranchGainTarget(i, parseFloat(gainEl && gainEl.value));
+      const g = this.branch[i].gain;
+      try { smoothParam(g.gain, this.ctx, target); } catch(_) {}
+    }
   }
 
   detach() {

@@ -852,10 +852,11 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         l1 += vR * this.leftPanGain[b];
         r1 += vR * this.rightPanGain[b];
 
-        // Per-branch mono wet tap (pre-pan): write to out2 channel b if available
+        // Per-branch mono wet tap (pre-pan): write rain-only to out2 channel b
+        // This excludes the continuous noise-path drone from spatial taps
         if (out2 && out2.length > b) {
           const ch = out2[b];
-          if (ch) ch[i] = vN + vR;
+          if (ch) ch[i] = vR;
         }
 
         // For monitoring: sum the per-branch bandpassed exciter per path
