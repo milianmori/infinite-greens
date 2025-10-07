@@ -48,27 +48,31 @@
           <h3>Global</h3>
           <label>refDistance <input id="refDistance" type="range" min="0.1" max="10" step="0.1" value="1"></label>
           <label>rolloffFactor <input id="rolloffFactor" type="range" min="0" max="4" step="0.01" value="1"></label>
-          <label>maxDistance <input id="maxDistance" type="range" min="1" max="50" step="1" value="25"></label>
+          <label>maxDistance <input id="maxDistance" type="range" min="1" max="50" step="1" value="10"></label>
           <label>coneInner <input id="coneInner" type="range" min="0" max="360" step="1" value="360"></label>
           <label>coneOuter <input id="coneOuter" type="range" min="0" max="360" step="1" value="360"></label>
           <label>coneOuterGain <input id="coneOuterGain" type="range" min="0" max="1" step="0.01" value="0"></label>
         </div>
         <div class="sp-card">
           <h3>World Reverb</h3>
-          <label>Wet Mix <input id="rvWet" type="range" min="0" max="1" step="0.01" value="0.25"></label>
-          <label>Decay Time (s) <input id="rvDecay" type="range" min="0.2" max="6" step="0.01" value="3.0"></label>
+          <label>Wet Mix <input id="rvWet" type="range" min="0" max="1" step="0.01" value="0.05"></label>
+          <label>Decay Time (s) <input id="rvDecay" type="range" min="0.2" max="6" step="0.01" value="1.5"></label>
           <label>Gain (+dB) <input id="rvGainDb" type="range" min="0" max="12" step="0.1" value="0"></label>
           <label>HF Damping (Hz) <input id="rvHf" type="range" min="500" max="20000" step="1" value="6000"></label>
+          <div style="margin-top: 0.5rem;">
+            <label><input id="rvExcl6" type="checkbox"> Exclude 6 from reverb</label>
+            <label style="margin-left: 0.75rem;"><input id="rvExcl7" type="checkbox"> Exclude 7 from reverb</label>
+          </div>
         </div>
         <div class="sp-card">
           <h3>Listener</h3>
-          <label>X <input id="listenerX" type="range" min="-10" max="10" step="0.01" value="0"></label>
-          <label>Y <input id="listenerY" type="range" min="-5" max="5" step="0.01" value="0"></label>
-          <label>Z <input id="listenerZ" type="range" min="-10" max="10" step="0.01" value="0"></label>
-          <label>Yaw (deg) <input id="listenerYaw" type="range" min="-180" max="180" step="1" value="0"></label>
+          <label>X <input id="listenerX" type="range" min="-10" max="10" step="0.01" value="-5.22"></label>
+          <label>Y <input id="listenerY" type="range" min="-5" max="5" step="0.01" value="-0.81"></label>
+          <label>Z <input id="listenerZ" type="range" min="-10" max="10" step="0.01" value="-7.69"></label>
+          <label>Yaw (deg) <input id="listenerYaw" type="range" min="-180" max="180" step="1" value="-180"></label>
           <label>Pitch (deg) <input id="listenerPitch" type="range" min="-89" max="89" step="1" value="0"></label>
           <hr />
-          <label><input id="autoMove" type="checkbox"> Auto-Move Listener</label>
+          <label><input id="autoMove" type="checkbox" checked> Auto-Move Listener</label>
           <label>Speed (units/s) <input id="autoSpeed" type="range" min="0.1" max="10" step="0.1" value="1.0"></label>
           <label>Approach (smooth) <input id="autoApproach" type="range" min="0.05" max="2" step="0.01" value="0.5"></label>
           <label>Dwell (s) <input id="autoDwell" type="range" min="0" max="2" step="0.01" value="0.3"></label>
@@ -94,6 +98,8 @@
       </section>
     </div>
 
+    <button id="floatingRandomizeBtn" class="floating-randomize">Randomize</button>
+
     <script type="module">
       import { SpatialNode } from './spatial-node.js';
       import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
@@ -109,7 +115,7 @@
       bc.onmessage = async (event) => {
         const data = event.data || {};
         if (data.type === 'randomizePositions') {
-          const r = (typeof data.radius === 'number') ? data.radius : parseFloat(($('maxDistance') || { value: '25' }).value);
+          const r = (typeof data.radius === 'number') ? data.radius : parseFloat(($('maxDistance') || { value: '10' }).value);
           if (spatial) spatial.randomizePositions({ radius: r });
         }
       };
@@ -295,7 +301,7 @@
           const x = document.createElement('input'); x.type = 'range'; x.min = '-5'; x.max = '5'; x.step = '0.01'; x.title = 'X position'; x.setAttribute('aria-label', 'X position');
           const y = document.createElement('input'); y.type = 'range'; y.min = '-3'; y.max = '3'; y.step = '0.01'; y.title = 'Y position'; y.setAttribute('aria-label', 'Y position');
           const z = document.createElement('input'); z.type = 'range'; z.min = '-10'; z.max = '0'; z.step = '0.01'; z.title = 'Z position'; z.setAttribute('aria-label', 'Z position');
-          const g = document.createElement('input'); g.type = 'range'; g.min = '0'; g.max = '2'; g.step = '0.01'; g.value = '1'; g.title = 'Gain'; g.setAttribute('aria-label', 'Gain');
+          const g = document.createElement('input'); g.type = 'range'; g.min = '0'; g.max = '2'; g.step = '0.01'; g.value = (i === 5 || i === 6) ? '0.3' : '1'; g.title = 'Gain'; g.setAttribute('aria-label', 'Gain');
           const solo = document.createElement('input'); solo.type = 'checkbox'; solo.title = 'Solo'; solo.setAttribute('aria-label', 'Solo');
 
           // Wrap inputs in labels so sliders are labeled in the UI
@@ -343,10 +349,11 @@
         bindRv('rvDecay', 'decayTime');
         bindRv('rvGainDb', 'gainDb');
         bindRv('rvHf', 'hfDampHz');
-        $('bypass').addEventListener('change', (e) => {
-          if (!spatial) return;
-          spatial.setBypass(!!e.target.checked);
-        });
+        // Reverb exclusions for sources 6 and 7 (indices 5 and 6)
+        const excl6 = $('rvExcl6');
+        const excl7 = $('rvExcl7');
+        if (excl6) excl6.addEventListener('change', () => { try { if (spatial) spatial.setReverbExclude(5, !!excl6.checked); } catch (_) {} });
+        if (excl7) excl7.addEventListener('change', () => { try { if (spatial) spatial.setReverbExclude(6, !!excl7.checked); } catch (_) {} });
         // listener controls
         const lid = ['listenerX','listenerY','listenerZ','listenerYaw','listenerPitch'];
         let isApplyingAutomation = false;
@@ -592,12 +599,15 @@
 
       function updateBypassUI() {
         const bypass = $('bypass').checked;
-        if (!spatial) return;
-        spatial.setBypass(bypass);
+        // Always toggle main stereo in opener (master) regardless of spatial init state
         try {
           if (window.opener && window.opener._mixerApi && typeof window.opener._mixerApi.muteMainStereo === 'function') {
             window.opener._mixerApi.muteMainStereo(!bypass);
           }
+        } catch (_) {}
+        // Then toggle spatial path if available
+        try {
+          if (spatial && typeof spatial.setBypass === 'function') spatial.setBypass(bypass);
         } catch (_) {}
       }
 
@@ -620,11 +630,14 @@
               });
               // Apply initial reverb params from UI controls
               try {
-                const wet = parseFloat(($('rvWet') || { value: '0.25' }).value);
-                const decay = parseFloat(($('rvDecay') || { value: '3.0' }).value);
+                const wet = parseFloat(($('rvWet') || { value: '0.05' }).value);
+                const decay = parseFloat(($('rvDecay') || { value: '1.5' }).value);
                 const gainDb = parseFloat(($('rvGainDb') || { value: '0' }).value);
                 const hf = parseFloat(($('rvHf') || { value: '6000' }).value);
                 spatial.setReverbParams({ wet, decayTime: decay, gainDb, hfDampHz: hf });
+                // Apply initial exclusions
+                try { spatial.setReverbExclude(5, !!(($('rvExcl6') || { checked: false }).checked)); } catch (_) {}
+                try { spatial.setReverbExclude(6, !!(($('rvExcl7') || { checked: false }).checked)); } catch (_) {}
               } catch (_) {}
               // Default: engage spatial path (not bypass), mute main stereo
               $('bypass').checked = false;
@@ -666,10 +679,22 @@
         // No-op for same tab; exists for parity with other pages
       });
       $('randBtn').addEventListener('click', () => {
-        const r = parseFloat(($('maxDistance') || { value: '25' }).value);
+        const r = parseFloat(($('maxDistance') || { value: '10' }).value);
         if (spatial) spatial.randomizePositions({ radius: r });
       });
       $('bypass').addEventListener('change', updateBypassUI);
+
+      // Floating Randomize triggers main page randomizer; fallback to local spatial randomize
+      const floatingRandomizeBtn = document.getElementById('floatingRandomizeBtn');
+      if (floatingRandomizeBtn) {
+        floatingRandomizeBtn.addEventListener('click', () => {
+          try { window.opener && window.opener.document.getElementById('randomizeBtn')?.click(); } catch (_) {}
+          try {
+            const r = parseFloat((document.getElementById('maxDistance') || { value: '10' }).value);
+            if (spatial) spatial.randomizePositions({ radius: r });
+          } catch (_) {}
+        });
+      }
 
       buildSourceRows();
       // Add numeric badges next to slider labels and initialize them

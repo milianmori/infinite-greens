@@ -20,7 +20,7 @@ export class SpatialNode {
     this.params = {
       refDistance: 1,
       rolloffFactor: 1,
-      maxDistance: 25,
+      maxDistance: 10,
       coneInner: 360,
       coneOuter: 360,
       coneOuterGain: 0
@@ -31,20 +31,23 @@ export class SpatialNode {
       x: (i - 3) * 0.5,
       y: 0,
       z: -2 - 0.2 * i,
-      gain: (i >= 5 ? 0.3 : 1),
+      gain: (i === 5 || i === 6) ? 0.3 : 1,
       solo: false
     }));
 
     // Listener pose used for distance-based reverb send (updated by UI)
-    this.listener = { x: 0, y: 0, z: 0 };
+    this.listener = { x: -5.22, y: -0.81, z: -7.69 };
 
     // Reverb parameters
     this.reverbParams = {
-      wet: 0.25,
-      decayTime: 3.0, // seconds
+      wet: 0.05,
+      decayTime: 1.5, // seconds
       gainDb: 0,      // make-up gain on wet bus (0..+12dB)
       hfDampHz: 6000
     };
+
+    // Reverb exclusion per source (true => exclude from reverb send)
+    this.reverbExclude = new Array(7).fill(false);
 
     this._buildGraph();
   }
@@ -56,7 +59,8 @@ export class SpatialNode {
       numberOfInputs: 2,
       numberOfOutputs: 1,
       outputChannelCount: [7],
-      channelCountMode: 'explicit',
+      channelCount: 5,                 // allow up to 5 channels per input
+      channelCountMode: 'clamped-max', // use connection's channel count up to 5
       channelInterpretation: 'speakers'
     });
     this.worklet.port.onmessage = (e) => {
@@ -242,9 +246,17 @@ export class SpatialNode {
       let norm = (d - minD) / (maxD - minD);
       if (norm < 0) norm = 0; else if (norm > 1) norm = 1;
       // Slight emphasis on far distances, preserve source gain
-      const sendAmt = Math.pow(norm, 0.7) * Math.max(0, s.gain);
+      let sendAmt = Math.pow(norm, 0.7) * Math.max(0, s.gain);
+      if (this.reverbExclude[i]) sendAmt = 0;
       try { this.reverbSends[i].gain.setTargetAtTime(sendAmt, t, 0.05); } catch (_) { this.reverbSends[i].gain.value = sendAmt; }
     }
+  }
+
+  setReverbExclude(index, excluded) {
+    const i = index | 0;
+    if (i < 0 || i >= 7) return;
+    this.reverbExclude[i] = !!excluded;
+    this._updateReverbSends();
   }
 
   setReverbParams(partial) {
