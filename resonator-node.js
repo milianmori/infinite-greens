@@ -15,8 +15,8 @@ export class ResonatorNode extends AudioWorkletNode {
   constructor(context) {
     super(context, 'resonator-processor', {
       numberOfInputs: 0,
-      numberOfOutputs: 2,
-      outputChannelCount: [2, 2],
+      numberOfOutputs: 3,
+      outputChannelCount: [2, 2, 5],
       parameterData: {
         nbranches: 4,
         noiseLevel: 0.03,

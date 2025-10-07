@@ -2,7 +2,10 @@
   ResonatorProcessor
   - Up to 40 branches, each a resonator fed by continuous white noise
   - Two resonator types: 2-pole real and complex 1-pole, crossfaded by rmix
-  - Stereo output with per-branch equal-power panning
+  - Outputs:
+    0: Noise-excited wet stereo sum (L,R)
+    1: Rain-excited wet stereo sum (L,R)
+    2: Rain stems 5-channel mono buses (0..4)
   - Global AudioParams: nbranches, noiseLevel, rmix, freqScale, freqCenter, decayScale
   - Per-branch params set via messages: setBranchParams(index, { freq, decay, amp, pan })
 */
@@ -723,10 +726,12 @@ class ResonatorProcessor extends AudioWorkletProcessor {
       this.smoothMix = smoothToward(this.smoothMix, rmixTarget, this.alphaMix);
 
       // Accumulators per output bus
-      let l0 = 0; // Noise-excited bus
-      let r0 = 0;
-      let l1 = 0; // Rain-excited bus
-      let r1 = 0;
+      let l0 = 0; // Noise-excited stereo bus L
+      let r0 = 0; // Noise-excited stereo bus R
+      let l1 = 0; // Rain-excited stereo bus L
+      let r1 = 0; // Rain-excited stereo bus R
+      // Five rain mono stems (pre-pan, even branch distribution)
+      let s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0;
       let monSum0 = 0;
       let monSum1 = 0;
 
@@ -844,13 +849,24 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         this.cR_iy1[b] = clamp(iR, -1, 1);
         const sumR = (1 - this.smoothMix) * this.twoR_y1[b] + this.smoothMix * this.cR_ry1[b];
 
-        // Gain and pan per path
+        // Gain and pan per path (stereo sums)
         const vN = sumN * amp;
         l0 += vN * this.leftPanGain[b];
         r0 += vN * this.rightPanGain[b];
         const vR = sumR * amp;
         l1 += vR * this.leftPanGain[b];
         r1 += vR * this.rightPanGain[b];
+
+        // Also accumulate mono rain stems: assign branch evenly to 5 buses
+        // Use branch index modulo 5 for distribution, sum pre-pan for mono buses
+        const stemVal = sumR * amp;
+        switch (b % 5) {
+          case 0: s0 += stemVal; break;
+          case 1: s1 += stemVal; break;
+          case 2: s2 += stemVal; break;
+          case 3: s3 += stemVal; break;
+          case 4: s4 += stemVal; break;
+        }
 
         // Spatialization removed: no per-branch taps
 
@@ -870,6 +886,15 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         // Wet level per path
         if (out0L) { out0L[i] = l0; out0R[i] = r0; }
         if (out1L) { out1L[i] = l1; out1R[i] = r1; }
+        // Write rain stems to output 2 channels 0..4 if present
+        const out2 = outputs[2];
+        if (out2 && out2.length >= 5) {
+          out2[0][i] = s0;
+          out2[1][i] = s1;
+          out2[2][i] = s2;
+          out2[3][i] = s3;
+          out2[4][i] = s4;
+        }
       }
     }
 

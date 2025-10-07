@@ -1,10 +1,10 @@
 /*
   spatial-processor
   - Inputs:
-    0: Rain path (stereo)
+    0: Rain stems (5-channel mono from resonator)
     1: Noise path (stereo)
   - Output: 7 mono channels
-    ch0..ch4: decorrelated stems derived from rain stereo
+    ch0..ch4: pass-through of rain stems 0..4
     ch5..ch6: decorrelated stems derived from noise stereo
   - Posts simple RMS meters per channel each render quantum
 */
@@ -12,13 +12,9 @@
 class SpatialProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    // Simple delay-line decorrelators per output channel
-    // Use prime-ish lengths to avoid obvious combing; lengths in samples at 44.1k
-    this.rainDelays = [23, 37, 53, 71, 89];
+    // Simple delay-line decorrelators for noise channels only
     this.noiseDelays = [101, 127];
-
     const mkBuf = (len) => ({ buf: new Float32Array(len), idx: 0, len });
-    this.rainBufs = this.rainDelays.map((d) => mkBuf(d));
     this.noiseBufs = this.noiseDelays.map((d) => mkBuf(d));
 
     this.meterAccum = new Float64Array(7);
@@ -43,8 +39,6 @@ class SpatialProcessor extends AudioWorkletProcessor {
 
     const inRain = inputs[0] || [];
     const inNoise = inputs[1] || [];
-    const rainL = inRain[0] || new Float32Array(128);
-    const rainR = inRain[1] || new Float32Array(128);
     const noiseL = inNoise[0] || new Float32Array(128);
     const noiseR = inNoise[1] || new Float32Array(128);
 
@@ -59,33 +53,16 @@ class SpatialProcessor extends AudioWorkletProcessor {
     const N = ch0.length;
 
     for (let i = 0; i < N; i += 1) {
-      // Mid/side-like bases for rain and noise
-      const rMid = (rainL[i] + rainR[i]) * 0.5;
-      const rSide = (rainL[i] - rainR[i]) * 0.5;
+      // For rain stems: pass-through 5 mono inputs to 5 outputs
+      const r0 = (inRain[0] || new Float32Array(N))[i] || 0;
+      const r1 = (inRain[1] || new Float32Array(N))[i] || 0;
+      const r2 = (inRain[2] || new Float32Array(N))[i] || 0;
+      const r3 = (inRain[3] || new Float32Array(N))[i] || 0;
+      const r4 = (inRain[4] || new Float32Array(N))[i] || 0;
+
+      // Mid/side-like bases for noise
       const nMid = (noiseL[i] + noiseR[i]) * 0.5;
       const nSide = (noiseL[i] - noiseR[i]) * 0.5;
-
-      // Push into delay buffers and read taps
-      // Rain stems (5)
-      let r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0;
-      for (let s = 0; s < 5; s += 1) {
-        const b = this.rainBufs[s];
-        // Mix mid/side differently per stem
-        const wMid = 0.6 + 0.08 * s; // 0.6..0.92
-        const wSide = 1 - wMid;      // 0.4..0.08
-        const v = wMid * rMid + wSide * rSide;
-        b.buf[b.idx] = v;
-        const readIdx = (b.idx + 1) % b.len;
-        const outV = b.buf[readIdx];
-        b.idx = readIdx;
-        switch (s) {
-          case 0: r0 = outV; break;
-          case 1: r1 = outV; break;
-          case 2: r2 = outV; break;
-          case 3: r3 = outV; break;
-          case 4: r4 = outV; break;
-        }
-      }
 
       // Noise stems (2)
       let n0 = 0, n1 = 0;

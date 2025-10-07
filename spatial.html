@@ -17,6 +17,8 @@
       .sp-row input[type="range"] { width: 100%; }
       .sp-controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
       .sp-card { border: 1px solid #444; padding: 0.75rem; border-radius: 6px; }
+      /* Place 3D View on the second row; Sources on the third spanning full width */
+      #card-sources { grid-row: 3; grid-column: 1 / -1; }
       .sp-meters { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; height: 60px; align-items: end; }
       .sp-meter { background: #222; border: 1px solid #333; position: relative; height: 100%; }
       .sp-meter > div { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(#0f0, #380); height: 0%; }
@@ -24,6 +26,7 @@
       .sp-viewport { width: 100%; height: 560px; background: #0b0f14; border: 1px solid #333; border-radius: 6px; position: relative; overflow: hidden; }
       .sp-label { color: #e8eaed; font-size: 12px; padding: 2px 4px; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; }
       .sp-card.sp-3d { grid-column: span 2; }
+      .sp-val { color: #9aa0a6; font-size: 12px; margin-left: 6px; min-width: 3ch; display: inline-block; text-align: right; }
     </style>
   </head>
   <body>
@@ -37,7 +40,7 @@
       
 
       <section class="sp-controls">
-        <div class="sp-card">
+        <div class="sp-card" id="card-sources">
           <h3>Sources</h3>
           <div id="sources"></div>
         </div>
@@ -45,11 +48,17 @@
           <h3>Global</h3>
           <label>refDistance <input id="refDistance" type="range" min="0.1" max="10" step="0.1" value="1"></label>
           <label>rolloffFactor <input id="rolloffFactor" type="range" min="0" max="4" step="0.01" value="1"></label>
-          <label>maxDistance <input id="maxDistance" type="range" min="1" max="200" step="1" value="50"></label>
-          <label>Randomize Max Distance <input id="randMaxDist" type="range" min="0.1" max="10" step="0.1" value="3"></label>
+          <label>maxDistance <input id="maxDistance" type="range" min="1" max="50" step="1" value="25"></label>
           <label>coneInner <input id="coneInner" type="range" min="0" max="360" step="1" value="360"></label>
           <label>coneOuter <input id="coneOuter" type="range" min="0" max="360" step="1" value="360"></label>
           <label>coneOuterGain <input id="coneOuterGain" type="range" min="0" max="1" step="0.01" value="0"></label>
+        </div>
+        <div class="sp-card">
+          <h3>World Reverb</h3>
+          <label>Wet Mix <input id="rvWet" type="range" min="0" max="1" step="0.01" value="0.25"></label>
+          <label>Decay Time (s) <input id="rvDecay" type="range" min="0.2" max="6" step="0.01" value="3.0"></label>
+          <label>Gain (+dB) <input id="rvGainDb" type="range" min="0" max="12" step="0.1" value="0"></label>
+          <label>HF Damping (Hz) <input id="rvHf" type="range" min="500" max="20000" step="1" value="6000"></label>
         </div>
         <div class="sp-card">
           <h3>Listener</h3>
@@ -100,12 +109,55 @@
       bc.onmessage = async (event) => {
         const data = event.data || {};
         if (data.type === 'randomizePositions') {
-          const r = (typeof data.radius === 'number') ? data.radius : parseFloat(($('randMaxDist') || { value: '3' }).value);
+          const r = (typeof data.radius === 'number') ? data.radius : parseFloat(($('maxDistance') || { value: '25' }).value);
           if (spatial) spatial.randomizePositions({ radius: r });
         }
       };
 
       function $(id) { return document.getElementById(id); }
+
+      // ----- Inline value badges for sliders -----
+      function formatValueForInput(input) {
+        const step = parseFloat(input.step || '1');
+        let decimals = 0;
+        if (step < 1) {
+          const frac = String(step).split('.')[1];
+          decimals = Math.min(3, (frac ? frac.length : 2));
+        }
+        if (input.id === 'listenerYaw' || input.id === 'listenerPitch') decimals = 0;
+        return Number(input.value).toFixed(decimals);
+      }
+
+      function ensureValueBadge(label) {
+        if (!label) return null;
+        const input = label.querySelector('input[type="range"]');
+        if (!input) return null;
+        let badge = label.querySelector('.sp-val');
+        if (!badge) {
+          badge = document.createElement('span');
+          badge.className = 'sp-val';
+          // Insert the badge before the input so it sits next to the label text
+          label.insertBefore(badge, input);
+        }
+        const update = () => { badge.textContent = formatValueForInput(input); };
+        input.addEventListener('input', update);
+        update();
+        return badge;
+      }
+
+      function setupValueBadges() {
+        const labels = Array.from(document.querySelectorAll('.sp-card label'));
+        labels.forEach(ensureValueBadge);
+      }
+
+      function refreshValueBadges() {
+        const labels = Array.from(document.querySelectorAll('.sp-card label'));
+        for (const label of labels) {
+          const input = label.querySelector('input[type="range"]');
+          const badge = label.querySelector('.sp-val');
+          if (input && badge) badge.textContent = formatValueForInput(input);
+        }
+      }
 
       function getListenerPose() {
         const lx = parseFloat($('listenerX').value);
@@ -240,19 +292,27 @@
           const label = document.createElement('span');
           label.textContent = String(i + 1);
           row.appendChild(label);
-          const x = document.createElement('input'); x.type = 'range'; x.min = '-5'; x.max = '5'; x.step = '0.01';
-          const y = document.createElement('input'); y.type = 'range'; y.min = '-3'; y.max = '3'; y.step = '0.01';
-          const z = document.createElement('input'); z.type = 'range'; z.min = '-10'; z.max = '0'; z.step = '0.01';
-          const g = document.createElement('input'); g.type = 'range'; g.min = '0'; g.max = '2'; g.step = '0.01'; g.value = '1';
-          const solo = document.createElement('input'); solo.type = 'checkbox';
+          const x = document.createElement('input'); x.type = 'range'; x.min = '-5'; x.max = '5'; x.step = '0.01'; x.title = 'X position'; x.setAttribute('aria-label', 'X position');
+          const y = document.createElement('input'); y.type = 'range'; y.min = '-3'; y.max = '3'; y.step = '0.01'; y.title = 'Y position'; y.setAttribute('aria-label', 'Y position');
+          const z = document.createElement('input'); z.type = 'range'; z.min = '-10'; z.max = '0'; z.step = '0.01'; z.title = 'Z position'; z.setAttribute('aria-label', 'Z position');
+          const g = document.createElement('input'); g.type = 'range'; g.min = '0'; g.max = '2'; g.step = '0.01'; g.value = '1'; g.title = 'Gain'; g.setAttribute('aria-label', 'Gain');
+          const solo = document.createElement('input'); solo.type = 'checkbox'; solo.title = 'Solo'; solo.setAttribute('aria-label', 'Solo');
+
+          // Wrap inputs in labels so sliders are labeled in the UI
+          const lx = document.createElement('label'); lx.textContent = 'X '; lx.appendChild(x);
+          const ly = document.createElement('label'); ly.textContent = 'Y '; ly.appendChild(y);
+          const lz = document.createElement('label'); lz.textContent = 'Z '; lz.appendChild(z);
+          const lg = document.createElement('label'); lg.textContent = 'Gain '; lg.appendChild(g);
+          const lsolo = document.createElement('label'); lsolo.appendChild(solo); lsolo.appendChild(document.createTextNode(' Solo'));
           // sensible defaults so the canvas shows markers immediately
           x.value = String((i - 3) * 0.8);
           y.value = '0';
           z.value = String(-3 - i * 0.3);
-          const apply = () => { if (spatial) spatial.setSource(i, { x: parseFloat(x.value), y: parseFloat(y.value), z: parseFloat(z.value), gain: parseFloat(g.value), solo: !!solo.checked }); };
-          [x,y,z,g].forEach(el => el.addEventListener('input', apply));
-          solo.addEventListener('change', apply);
-          row.appendChild(x); row.appendChild(y); row.appendChild(z); row.appendChild(g); row.appendChild(solo);
+          const applyPoseGain = () => { if (spatial) spatial.setSource(i, { x: parseFloat(x.value), y: parseFloat(y.value), z: parseFloat(z.value), gain: parseFloat(g.value) }); };
+          const applySolo = () => { if (spatial) spatial.setSource(i, { solo: !!solo.checked }); };
+          [x,y,z,g].forEach(el => el.addEventListener('input', applyPoseGain));
+          solo.addEventListener('change', applySolo);
+          row.appendChild(lx); row.appendChild(ly); row.appendChild(lz); row.appendChild(lg); row.appendChild(lsolo);
           root.appendChild(row);
         }
       }
@@ -269,6 +329,20 @@
             spatial.setGlobal(params);
           });
         });
+        // Reverb controls
+        const bindRv = (id, key, map) => {
+          const el = $(id);
+          if (!el) return;
+          el.addEventListener('input', () => {
+            if (!spatial) return;
+            const v = typeof map === 'function' ? map(el.value) : parseFloat(el.value);
+            spatial.setReverbParams({ [key]: v });
+          });
+        };
+        bindRv('rvWet', 'wet');
+        bindRv('rvDecay', 'decayTime');
+        bindRv('rvGainDb', 'gainDb');
+        bindRv('rvHf', 'hfDampHz');
         $('bypass').addEventListener('change', (e) => {
           if (!spatial) return;
           spatial.setBypass(!!e.target.checked);
@@ -295,6 +369,8 @@
               } else if (L.setOrientation) {
                 L.setOrientation(pose.forward.x, pose.forward.y, pose.forward.z, 0, 1, 0);
               }
+              // Also inform SpatialNode so distance-based reverb send can update
+              try { if (spatial && spatial.setListenerPose) spatial.setListenerPose(pose); } catch (_) {}
             }
           } catch (_) {}
           // Update 3D viz
@@ -304,7 +380,7 @@
           const el = $(id);
           if (el) el.addEventListener('input', () => {
             // Manual override disables automation unless we're the ones updating
-            if (!isApplyingAutomation) stopAutoMove();
+            if (!isApplyingAutomation) { stopAutoMove(); stopYawSpin(); }
             updateListener();
           });
         });
@@ -327,6 +403,8 @@
         let running = false;
         let curPos = { x: parseFloat($('listenerX').value), y: parseFloat($('listenerY').value), z: parseFloat($('listenerZ').value) };
         let curYaw = parseFloat($('listenerYaw').value) * Math.PI / 180;
+        let yawLastTs = 0;
+        let yawRunning = false;
 
         function smoothAlpha(k, dt) {
           const kd = Math.max(0.0001, k);
@@ -380,7 +458,33 @@
           } catch (_) {}
           // Trigger downstream updates
           try { updateListener(); } catch (_) {}
+          try { refreshValueBadges(); } catch (_) {}
           isApplyingAutomation = false;
+        }
+
+        function yawTick(ts) {
+          if (!yawRunning || !auto.yawEnabled || auto.enabled) return;
+          if (!yawLastTs) yawLastTs = ts;
+          const dt = Math.min(0.1, Math.max(0, (ts - yawLastTs) / 1000));
+          yawLastTs = ts;
+          const step = Math.max(0, auto.yawRateDeg) * Math.PI / 180 * dt;
+          curYaw += step;
+          while (curYaw > Math.PI) curYaw -= 2 * Math.PI;
+          while (curYaw < -Math.PI) curYaw += 2 * Math.PI;
+          setSlidersFromState();
+          requestAnimationFrame(yawTick);
+        }
+
+        function startYawSpin() {
+          if (auto.yawEnabled && !auto.enabled && !yawRunning) {
+            yawRunning = true;
+            yawLastTs = 0;
+            requestAnimationFrame(yawTick);
+          }
+        }
+
+        function stopYawSpin() {
+          yawRunning = false;
         }
 
         function autoTick(ts) {
@@ -439,12 +543,14 @@
           recomputeRoute();
           running = true;
           lastTs = 0;
+          stopYawSpin();
           requestAnimationFrame(autoTick);
         }
 
         function stopAutoMove() {
           auto.enabled = false;
           running = false;
+          if (auto.yawEnabled) startYawSpin();
         }
 
         // Hook UI for auto params
@@ -456,6 +562,13 @@
         bindNum('autoDwell', 'dwell');
         bindChk('autoYaw', 'yawEnabled');
         bindNum('autoYawRate', 'yawRateDeg');
+
+        // Ensure yaw spin follows toggle state when Auto-Move is off
+        const autoYawEl = $('autoYaw');
+        if (autoYawEl) autoYawEl.addEventListener('change', () => {
+          if (auto.yawEnabled && !auto.enabled) startYawSpin();
+          else stopYawSpin();
+        });
 
         // Recompute route when sources change/randomize
         const onSourcesUpdated = () => { if (auto.enabled) recomputeRoute(); };
@@ -474,6 +587,7 @@
 
         // Start/stop based on toggle initial state
         if ($('autoMove').checked) startAutoMove();
+        else if ($('autoYaw').checked) startYawSpin();
       }
 
       function updateBypassUI() {
@@ -504,6 +618,14 @@
                   bars[i].style.height = String(Math.round(pct * 100)) + '%';
                 }
               });
+              // Apply initial reverb params from UI controls
+              try {
+                const wet = parseFloat(($('rvWet') || { value: '0.25' }).value);
+                const decay = parseFloat(($('rvDecay') || { value: '3.0' }).value);
+                const gainDb = parseFloat(($('rvGainDb') || { value: '0' }).value);
+                const hf = parseFloat(($('rvHf') || { value: '6000' }).value);
+                spatial.setReverbParams({ wet, decayTime: decay, gainDb, hfDampHz: hf });
+              } catch (_) {}
               // Default: engage spatial path (not bypass), mute main stereo
               $('bypass').checked = false;
               updateBypassUI();
@@ -544,12 +666,14 @@
         // No-op for same tab; exists for parity with other pages
       });
       $('randBtn').addEventListener('click', () => {
-        const r = parseFloat(($('randMaxDist') || { value: '3' }).value);
+        const r = parseFloat(($('maxDistance') || { value: '25' }).value);
         if (spatial) spatial.randomizePositions({ radius: r });
       });
       $('bypass').addEventListener('change', updateBypassUI);
 
       buildSourceRows();
+      // Add numeric badges next to slider labels and initialize them
+      try { setupValueBadges(); refreshValueBadges(); } catch (_) {}
       hookGlobals();
       // Build 3D viz
       try { viz = createViz(document.getElementById('spViewport')); } catch (_) {}
