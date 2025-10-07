@@ -46,6 +46,7 @@
           <label>refDistance <input id="refDistance" type="range" min="0.1" max="10" step="0.1" value="1"></label>
           <label>rolloffFactor <input id="rolloffFactor" type="range" min="0" max="4" step="0.01" value="1"></label>
           <label>maxDistance <input id="maxDistance" type="range" min="1" max="200" step="1" value="50"></label>
+          <label>Randomize Max Distance <input id="randMaxDist" type="range" min="0.1" max="10" step="0.1" value="3"></label>
           <label>coneInner <input id="coneInner" type="range" min="0" max="360" step="1" value="360"></label>
           <label>coneOuter <input id="coneOuter" type="range" min="0" max="360" step="1" value="360"></label>
           <label>coneOuterGain <input id="coneOuterGain" type="range" min="0" max="1" step="0.01" value="0"></label>
@@ -57,6 +58,13 @@
           <label>Z <input id="listenerZ" type="range" min="-10" max="10" step="0.01" value="0"></label>
           <label>Yaw (deg) <input id="listenerYaw" type="range" min="-180" max="180" step="1" value="0"></label>
           <label>Pitch (deg) <input id="listenerPitch" type="range" min="-89" max="89" step="1" value="0"></label>
+          <hr />
+          <label><input id="autoMove" type="checkbox"> Auto-Move Listener</label>
+          <label>Speed (units/s) <input id="autoSpeed" type="range" min="0.1" max="10" step="0.1" value="1.0"></label>
+          <label>Approach (smooth) <input id="autoApproach" type="range" min="0.05" max="2" step="0.01" value="0.5"></label>
+          <label>Dwell (s) <input id="autoDwell" type="range" min="0" max="2" step="0.01" value="0.3"></label>
+          <label><input id="autoYaw" type="checkbox" checked> Auto Yaw</label>
+          <label>Yaw Rate (deg/s) <input id="autoYawRate" type="range" min="10" max="360" step="1" value="120"></label>
         </div>
         <div class="sp-card sp-3d">
           <h3>3D View</h3>
@@ -92,7 +100,8 @@
       bc.onmessage = async (event) => {
         const data = event.data || {};
         if (data.type === 'randomizePositions') {
-          if (spatial) spatial.randomizePositions();
+          const r = (typeof data.radius === 'number') ? data.radius : parseFloat(($('randMaxDist') || { value: '3' }).value);
+          if (spatial) spatial.randomizePositions({ radius: r });
         }
       };
 
@@ -266,6 +275,7 @@
         });
         // listener controls
         const lid = ['listenerX','listenerY','listenerZ','listenerYaw','listenerPitch'];
+        let isApplyingAutomation = false;
         const updateListener = () => {
           const pose = getListenerPose();
           try {
@@ -290,7 +300,180 @@
           // Update 3D viz
           try { if (viz) viz.updateListener(pose); } catch (_) {}
         };
-        lid.forEach((id) => { const el = $(id); if (el) el.addEventListener('input', updateListener); });
+        lid.forEach((id) => {
+          const el = $(id);
+          if (el) el.addEventListener('input', () => {
+            // Manual override disables automation unless we're the ones updating
+            if (!isApplyingAutomation) stopAutoMove();
+            updateListener();
+          });
+        });
+
+        // ----- Auto-move wiring -----
+        const auto = {
+          enabled: false,
+          speed: 1.0,
+          approach: 0.5,
+          dwell: 0.3,
+          yawEnabled: true,
+          yawRateDeg: 120
+        };
+        let route = [];
+        let segIndex = 0;
+        let segElapsed = 0;
+        let segDuration = 1;
+        let dwellLeft = 0;
+        let lastTs = 0;
+        let running = false;
+        let curPos = { x: parseFloat($('listenerX').value), y: parseFloat($('listenerY').value), z: parseFloat($('listenerZ').value) };
+        let curYaw = parseFloat($('listenerYaw').value) * Math.PI / 180;
+
+        function smoothAlpha(k, dt) {
+          const kd = Math.max(0.0001, k);
+          return 1 - Math.exp(-kd * dt * 5);
+        }
+
+        function getSourcePositions() {
+          const list = [];
+          try {
+            if (!spatial) return list;
+            for (let i = 0; i < 7; i += 1) {
+              const s = spatial.sources[i];
+              if (s) list.push({ x: s.x, y: s.y, z: s.z });
+            }
+          } catch (_) {}
+          return list;
+        }
+
+        function recomputeRoute() {
+          const center = { x: 0, y: 0, z: 0 };
+          const srcs = getSourcePositions();
+          // Sort sources by distance to center
+          srcs.sort((a, b) => {
+            const da = (a.x - center.x) * (a.x - center.x) + (a.y - center.y) * (a.y - center.y) + (a.z - center.z) * (a.z - center.z);
+            const db = (b.x - center.x) * (b.x - center.x) + (b.y - center.y) * (b.y - center.y) + (b.z - center.z) * (b.z - center.z);
+            return da - db;
+          });
+          route = [center, ...srcs];
+          segIndex = 0;
+          segElapsed = 0;
+          dwellLeft = 0;
+          prepareSegment();
+        }
+
+        function prepareSegment() {
+          if (!route.length) return;
+          const a = route[segIndex % route.length];
+          const b = route[(segIndex + 1) % route.length];
+          const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+          const dist = Math.max(0.0001, Math.hypot(dx, dy, dz));
+          segDuration = dist / Math.max(0.001, auto.speed);
+        }
+
+        function setSlidersFromState() {
+          isApplyingAutomation = true;
+          try {
+            $('listenerX').value = String(curPos.x);
+            $('listenerY').value = String(curPos.y);
+            $('listenerZ').value = String(curPos.z);
+            $('listenerYaw').value = String(Math.round(curYaw * 180 / Math.PI));
+          } catch (_) {}
+          // Trigger downstream updates
+          try { updateListener(); } catch (_) {}
+          isApplyingAutomation = false;
+        }
+
+        function autoTick(ts) {
+          if (!running || !auto.enabled || !route.length) return;
+          if (!lastTs) lastTs = ts;
+          const dt = Math.min(0.1, Math.max(0, (ts - lastTs) / 1000));
+          lastTs = ts;
+
+          if (dwellLeft > 0) {
+            dwellLeft -= dt;
+            setSlidersFromState();
+            requestAnimationFrame(autoTick);
+            return;
+          }
+
+          const a = route[segIndex % route.length];
+          const b = route[(segIndex + 1) % route.length];
+          const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+          const dist = Math.max(0.0001, Math.hypot(dx, dy, dz));
+          const t = Math.min(1, segElapsed / Math.max(0.0001, segDuration));
+          const s = t * t * (3 - 2 * t); // smoothstep
+          const target = { x: a.x + dx * s, y: a.y + dy * s, z: a.z + dz * s };
+          const alpha = smoothAlpha(auto.approach, dt);
+          curPos.x += (target.x - curPos.x) * alpha;
+          curPos.y += (target.y - curPos.y) * alpha;
+          curPos.z += (target.z - curPos.z) * alpha;
+
+          // Auto-yaw toward motion direction
+          if (auto.yawEnabled) {
+            const dirX = b.x - curPos.x;
+            const dirZ = b.z - curPos.z;
+            const desiredYaw = Math.atan2(dirX, -dirZ);
+            let dYaw = desiredYaw - curYaw;
+            while (dYaw > Math.PI) dYaw -= 2 * Math.PI;
+            while (dYaw < -Math.PI) dYaw += 2 * Math.PI;
+            const maxStep = Math.max(0, auto.yawRateDeg) * Math.PI / 180 * dt;
+            if (dYaw > maxStep) dYaw = maxStep; else if (dYaw < -maxStep) dYaw = -maxStep;
+            curYaw += dYaw;
+          }
+
+          segElapsed += dt;
+          if (segElapsed >= segDuration) {
+            segIndex = (segIndex + 1) % route.length;
+            segElapsed = 0;
+            dwellLeft = Math.max(0, auto.dwell);
+            prepareSegment();
+          }
+
+          setSlidersFromState();
+          requestAnimationFrame(autoTick);
+        }
+
+        function startAutoMove() {
+          auto.enabled = !!$('autoMove').checked;
+          if (!auto.enabled) return stopAutoMove();
+          recomputeRoute();
+          running = true;
+          lastTs = 0;
+          requestAnimationFrame(autoTick);
+        }
+
+        function stopAutoMove() {
+          auto.enabled = false;
+          running = false;
+        }
+
+        // Hook UI for auto params
+        const bindNum = (id, key) => { const el = $(id); if (el) el.addEventListener('input', () => { auto[key] = parseFloat(el.value); if (key === 'speed') prepareSegment(); }); };
+        const bindChk = (id, key) => { const el = $(id); if (el) el.addEventListener('change', () => { auto[key] = !!el.checked; if (id === 'autoMove') { auto.enabled = !!el.checked; if (auto.enabled) startAutoMove(); else stopAutoMove(); } }); };
+        bindChk('autoMove', 'enabled');
+        bindNum('autoSpeed', 'speed');
+        bindNum('autoApproach', 'approach');
+        bindNum('autoDwell', 'dwell');
+        bindChk('autoYaw', 'yawEnabled');
+        bindNum('autoYawRate', 'yawRateDeg');
+
+        // Recompute route when sources change/randomize
+        const onSourcesUpdated = () => { if (auto.enabled) recomputeRoute(); };
+        $('randBtn').addEventListener('click', () => { setTimeout(onSourcesUpdated, 0); });
+        try {
+          bc.addEventListener('message', (event) => { const d = event.data || {}; if (d.type === 'randomizePositions') setTimeout(onSourcesUpdated, 0); });
+        } catch (_) {}
+
+        // Expose recompute when spatial.setSource is called
+        try {
+          const origSetSource = spatial && spatial.setSource ? spatial.setSource.bind(spatial) : null;
+          if (origSetSource) {
+            spatial.setSource = (idx, params) => { origSetSource(idx, params); onSourcesUpdated(); };
+          }
+        } catch (_) {}
+
+        // Start/stop based on toggle initial state
+        if ($('autoMove').checked) startAutoMove();
       }
 
       function updateBypassUI() {
@@ -360,7 +543,10 @@
       $('openBtn').addEventListener('click', () => {
         // No-op for same tab; exists for parity with other pages
       });
-      $('randBtn').addEventListener('click', () => { if (spatial) spatial.randomizePositions(); });
+      $('randBtn').addEventListener('click', () => {
+        const r = parseFloat(($('randMaxDist') || { value: '3' }).value);
+        if (spatial) spatial.randomizePositions({ radius: r });
+      });
       $('bypass').addEventListener('change', updateBypassUI);
 
       buildSourceRows();

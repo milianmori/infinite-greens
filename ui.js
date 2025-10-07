@@ -994,10 +994,15 @@ if (randomizeBtnEl) randomizeBtnEl.addEventListener('click', () => {
   }
   // Spatialization removed: no cross-tab spatial randomization
   try {
-    // Also notify spatial window to randomize positions
+    // Also notify spatial window to randomize positions with current radius if available
     if (typeof BroadcastChannel !== 'undefined') {
       const sp = new BroadcastChannel('spatial');
-      sp.postMessage({ type: 'randomizePositions' });
+      let radius = null;
+      try {
+        const el = document.getElementById('randMaxDist');
+        if (el) radius = parseFloat(el.value);
+      } catch (_) {}
+      sp.postMessage({ type: 'randomizePositions', radius });
     }
   } catch (_) {}
 });

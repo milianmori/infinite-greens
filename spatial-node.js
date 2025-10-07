@@ -151,13 +151,28 @@ export class SpatialNode {
     }
   }
 
-  randomizePositions(range = { x: [-3, 3], y: [-1, 1], z: [-6, -1] }) {
-    const rr = (a, b) => Math.random() * (b - a) + a;
+  randomizePositions(opts) {
+    const radius = (opts && typeof opts.radius === 'number') ? Math.max(0.01, opts.radius) : 3;
+    // Sample positions within a front-facing hemisphere of given radius, biased forward (negative z)
     for (let i = 0; i < 7; i += 1) {
-      const x = rr(range.x[0], range.x[1]);
-      const y = rr(range.y[0], range.y[1]);
-      const z = rr(range.z[0], range.z[1]);
-      this.setSource(i, { x, y, z });
+      // Uniform on sphere using Marsaglia method, then scale by random radius in [0, R]
+      let x, y, z;
+      while (true) {
+        const u = Math.random() * 2 - 1;
+        const v = Math.random() * 2 - 1;
+        const s = u * u + v * v;
+        if (s >= 1 || s === 0) continue;
+        const mul = Math.sqrt(1 - s);
+        x = 2 * u * mul;
+        y = 2 * v * mul;
+        z = 1 - 2 * s;
+        if (z <= 0) break; // front hemisphere (negative z in our coord system), we flip below
+      }
+      // Flip to front (negative z) if needed
+      z = -Math.abs(z);
+      // Random radius with slight outward bias (sqrt for uniform disk -> cone volume)
+      const r = radius * Math.sqrt(Math.random());
+      this.setSource(i, { x: x * r, y: y * r * 0.5, z: z * r - 0.5 });
     }
   }
 
