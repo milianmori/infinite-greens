@@ -505,7 +505,7 @@ class ResonatorProcessor extends AudioWorkletProcessor {
     const out1 = outputs[1];
     const out1L = out1 && out1[0];
     const out1R = out1 && out1[1];
-    const out2 = outputs[2]; // optional: per-branch mono taps
+    // Spatialization removed: no third output bus
 
     const frames = out0L.length;
 
@@ -852,12 +852,7 @@ class ResonatorProcessor extends AudioWorkletProcessor {
         l1 += vR * this.leftPanGain[b];
         r1 += vR * this.rightPanGain[b];
 
-        // Per-branch mono wet tap (pre-pan): write rain-only to out2 channel b
-        // This excludes the continuous noise-path drone from spatial taps
-        if (out2 && out2.length > b) {
-          const ch = out2[b];
-          if (ch) ch[i] = vR;
-        }
+        // Spatialization removed: no per-branch taps
 
         // For monitoring: sum the per-branch bandpassed exciter per path
         monSum0 += xbpN;

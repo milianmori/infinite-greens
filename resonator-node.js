@@ -2,7 +2,6 @@
 // Exposes AudioParams and per-branch setters
 
 export class ResonatorNode extends AudioWorkletNode {
-  static SPATIAL_MAX_CHANNELS = 32;
   static async create(context) {
     // Ensure the processor module is loaded; ignore error if already loaded
     try {
@@ -16,8 +15,8 @@ export class ResonatorNode extends AudioWorkletNode {
   constructor(context) {
     super(context, 'resonator-processor', {
       numberOfInputs: 0,
-      numberOfOutputs: 3,
-      outputChannelCount: [2, 2, ResonatorNode.SPATIAL_MAX_CHANNELS],
+      numberOfOutputs: 2,
+      outputChannelCount: [2, 2],
       parameterData: {
         nbranches: 4,
         noiseLevel: 0.03,

@@ -738,7 +738,6 @@ async function startAudio() {
     latencyHint: 'playback'
   });
   node = await ResonatorNode.create(context);
-  // Master output bus to allow external spatial mixer to inject stereo
   const masterOut = context.createGain();
   masterOut.gain.value = 1;
   masterOut.connect(context.destination);
@@ -799,7 +798,6 @@ async function startAudio() {
     getNoiseLP: () => noiseLPF.frequency.value,
     getContext: () => context,
     getNode: () => node,
-    // Spatial integration helpers
     getMasterOut: () => masterOut,
     getNoiseGain: () => noiseGain,
     getRainGain: () => rainGain,
@@ -994,13 +992,7 @@ if (randomizeBtnEl) randomizeBtnEl.addEventListener('click', () => {
     rootEl.dispatchEvent(new Event('change', { bubbles: true }));
     scaleEl.dispatchEvent(new Event('change', { bubbles: true }));
   }
-  try {
-    // Notify spatial window (if open) to randomize positions and reverb
-    if (typeof BroadcastChannel !== 'undefined') {
-      const sp = new BroadcastChannel('spatial');
-      sp.postMessage({ type: 'randomizeSpatial' });
-    }
-  } catch(_) {}
+  // Spatialization removed: no cross-tab spatial randomization
 });
 const resetBtnEl = document.getElementById('resetBtn');
 if (resetBtnEl) resetBtnEl.addEventListener('click', () => {
@@ -1101,12 +1093,7 @@ if (openRandomizerBtn) {
   });
 }
 
-const openSpatialBtn = document.getElementById('openSpatialBtn');
-if (openSpatialBtn) {
-  openSpatialBtn.addEventListener('click', () => {
-    window.open('spatial.html', 'Spatial Mixer');
-  });
-}
+// Spatialization removed: no Spatial window
 
 // Build Randomizer panel if present on this page
 if (document.getElementById('randomizerPanel')) {
