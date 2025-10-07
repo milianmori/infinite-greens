@@ -993,6 +993,13 @@ if (randomizeBtnEl) randomizeBtnEl.addEventListener('click', () => {
     scaleEl.dispatchEvent(new Event('change', { bubbles: true }));
   }
   // Spatialization removed: no cross-tab spatial randomization
+  try {
+    // Also notify spatial window to randomize positions
+    if (typeof BroadcastChannel !== 'undefined') {
+      const sp = new BroadcastChannel('spatial');
+      sp.postMessage({ type: 'randomizePositions' });
+    }
+  } catch (_) {}
 });
 const resetBtnEl = document.getElementById('resetBtn');
 if (resetBtnEl) resetBtnEl.addEventListener('click', () => {
@@ -1093,7 +1100,12 @@ if (openRandomizerBtn) {
   });
 }
 
-// Spatialization removed: no Spatial window
+const openSpatialBtn = document.getElementById('openSpatialBtn');
+if (openSpatialBtn) {
+  openSpatialBtn.addEventListener('click', () => {
+    window.open('spatial.html', 'Spatializer');
+  });
+}
 
 // Build Randomizer panel if present on this page
 if (document.getElementById('randomizerPanel')) {

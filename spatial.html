@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spatializer</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+        }
+      }
+    </script>
+    <style>
+      .sp-row { display: grid; grid-template-columns: 1.5rem repeat(4, 1fr) auto; gap: 0.5rem; align-items: center; margin: 0.25rem 0; }
+      .sp-row input[type="range"] { width: 100%; }
+      .sp-controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+      .sp-card { border: 1px solid #444; padding: 0.75rem; border-radius: 6px; }
+      .sp-meters { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; height: 60px; align-items: end; }
+      .sp-meter { background: #222; border: 1px solid #333; position: relative; height: 100%; }
+      .sp-meter > div { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(#0f0, #380); height: 0%; }
+      .head { display: flex; gap: 0.5rem; align-items: center; }
+      .sp-viewport { width: 100%; height: 560px; background: #0b0f14; border: 1px solid #333; border-radius: 6px; position: relative; overflow: hidden; }
+      .sp-label { color: #e8eaed; font-size: 12px; padding: 2px 4px; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; }
+      .sp-card.sp-3d { grid-column: span 2; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header class="head">
+        <button id="openBtn">Open Spatial</button>
+        <button id="randBtn">Randomize</button>
+        <label><input type="checkbox" id="bypass"> Bypass</label>
+      </header>
+
+      
+
+      <section class="sp-controls">
+        <div class="sp-card">
+          <h3>Sources</h3>
+          <div id="sources"></div>
+        </div>
+        <div class="sp-card">
+          <h3>Global</h3>
+          <label>refDistance <input id="refDistance" type="range" min="0.1" max="10" step="0.1" value="1"></label>
+          <label>rolloffFactor <input id="rolloffFactor" type="range" min="0" max="4" step="0.01" value="1"></label>
+          <label>maxDistance <input id="maxDistance" type="range" min="1" max="200" step="1" value="50"></label>
+          <label>coneInner <input id="coneInner" type="range" min="0" max="360" step="1" value="360"></label>
+          <label>coneOuter <input id="coneOuter" type="range" min="0" max="360" step="1" value="360"></label>
+          <label>coneOuterGain <input id="coneOuterGain" type="range" min="0" max="1" step="0.01" value="0"></label>
+        </div>
+        <div class="sp-card">
+          <h3>Listener</h3>
+          <label>X <input id="listenerX" type="range" min="-10" max="10" step="0.01" value="0"></label>
+          <label>Y <input id="listenerY" type="range" min="-5" max="5" step="0.01" value="0"></label>
+          <label>Z <input id="listenerZ" type="range" min="-10" max="10" step="0.01" value="0"></label>
+          <label>Yaw (deg) <input id="listenerYaw" type="range" min="-180" max="180" step="1" value="0"></label>
+          <label>Pitch (deg) <input id="listenerPitch" type="range" min="-89" max="89" step="1" value="0"></label>
+        </div>
+        <div class="sp-card sp-3d">
+          <h3>3D View</h3>
+          <div id="spViewport" class="sp-viewport"></div>
+        </div>
+        <div class="sp-card">
+          <h3>Meters</h3>
+          <div class="sp-meters" id="meters">
+            <div class="sp-meter"><div></div></div>
+            <div class="sp-meter"><div></div></div>
+            <div class="sp-meter"><div></div></div>
+            <div class="sp-meter"><div></div></div>
+            <div class="sp-meter"><div></div></div>
+            <div class="sp-meter"><div></div></div>
+            <div class="sp-meter"><div></div></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script type="module">
+      import { SpatialNode } from './spatial-node.js';
+      import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+      import { OrbitControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+      import { CSS2DRenderer, CSS2DObject } from 'https://unpkg.com/three@0.160.0/examples/jsm/renderers/CSS2DRenderer.js';
+
+      let context = null;
+      let spatial = null;
+      let viz = null;
+
+      // Access shared items from main window via BroadcastChannel
+      const bc = new BroadcastChannel('spatial');
+      bc.onmessage = async (event) => {
+        const data = event.data || {};
+        if (data.type === 'randomizePositions') {
+          if (spatial) spatial.randomizePositions();
+        }
+      };
+
+      function $(id) { return document.getElementById(id); }
+
+      function getListenerPose() {
+        const lx = parseFloat($('listenerX').value);
+        const ly = parseFloat($('listenerY').value);
+        const lz = parseFloat($('listenerZ').value);
+        const yawDeg = parseFloat($('listenerYaw').value);
+        const pitchDeg = parseFloat($('listenerPitch').value);
+        const yaw = yawDeg * Math.PI / 180;
+        const pitch = pitchDeg * Math.PI / 180;
+        const fx = Math.cos(pitch) * Math.sin(yaw);
+        const fy = Math.sin(pitch);
+        const fz = -Math.cos(pitch) * Math.cos(yaw);
+        return { position: { x: lx, y: ly, z: lz }, forward: { x: fx, y: fy, z: fz } };
+      }
+
+      function createViz(container) {
+        if (!container) return null;
+        const scene = new THREE.Scene();
+        scene.background = null;
+
+        const width = container.clientWidth || 600;
+        const height = container.clientHeight || 400;
+        const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
+        camera.position.set(5, 3, 6);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.setSize(width, height);
+        container.appendChild(renderer.domElement);
+
+        const labelRenderer = new CSS2DRenderer();
+        labelRenderer.setSize(width, height);
+        labelRenderer.domElement.style.position = 'absolute';
+        labelRenderer.domElement.style.left = '0';
+        labelRenderer.domElement.style.top = '0';
+        labelRenderer.domElement.style.pointerEvents = 'none';
+        container.appendChild(labelRenderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.target.set(0, 0, -3);
+
+        // Helpers
+        const grid = new THREE.GridHelper(20, 20, 0x334155, 0x1f2937);
+        grid.position.y = -0.001;
+        scene.add(grid);
+        const axes = new THREE.AxesHelper(1.5);
+        scene.add(axes);
+
+        const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambient);
+        const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+        dir.position.set(3, 5, 4);
+        scene.add(dir);
+
+        // Sources group
+        const sources = [];
+        const baseColor = 0x60a5fa; // blue-ish for 1..5
+        const color6 = 0x22c55e;    // green for 6
+        const color7 = 0xef4444;    // red for 7
+        const makeLabel = (text) => {
+          const div = document.createElement('div');
+          div.className = 'sp-label';
+          div.textContent = text;
+          return new CSS2DObject(div);
+        };
+        for (let i = 0; i < 7; i += 1) {
+          const geom = new THREE.SphereGeometry(0.12, 24, 16);
+          const color = (i === 5) ? color6 : (i === 6) ? color7 : baseColor;
+          const mat = new THREE.MeshPhongMaterial({ color });
+          const mesh = new THREE.Mesh(geom, mat);
+          const label = makeLabel(String(i + 1));
+          label.position.set(0, 0.22, 0);
+          mesh.add(label);
+          scene.add(mesh);
+          sources.push({ mesh });
+        }
+
+        // Listener marker + forward arrow
+        const listenerGeom = new THREE.SphereGeometry(0.14, 24, 16);
+        const listenerMat = new THREE.MeshPhongMaterial({ color: 0xfbbf24 }); // amber
+        const listener = new THREE.Mesh(listenerGeom, listenerMat);
+        scene.add(listener);
+        const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, 0), 0.9, 0xfbbf24);
+        scene.add(arrow);
+
+        function updateSource(index, s) {
+          const obj = sources[index];
+          if (!obj || !s) return;
+          obj.mesh.position.set(s.x, s.y, s.z);
+        }
+
+        function updateListener(pose) {
+          if (!pose) return;
+          listener.position.set(pose.position.x, pose.position.y, pose.position.z);
+          const dirVec = new THREE.Vector3(pose.forward.x, pose.forward.y, pose.forward.z);
+          if (dirVec.lengthSq() > 1e-6) dirVec.normalize();
+          else dirVec.set(0, 0, -1);
+          arrow.setDirection(dirVec);
+          arrow.position.copy(listener.position);
+        }
+
+        function resize() {
+          const w = container.clientWidth || 600;
+          const h = container.clientHeight || 400;
+          camera.aspect = w / h;
+          camera.updateProjectionMatrix();
+          renderer.setSize(w, h);
+          labelRenderer.setSize(w, h);
+        }
+        window.addEventListener('resize', resize);
+        const ro = new ResizeObserver(() => resize());
+        try { ro.observe(container); } catch (_) {}
+
+        function animate() {
+          controls.update();
+          renderer.render(scene, camera);
+          labelRenderer.render(scene, camera);
+          requestAnimationFrame(animate);
+        }
+        animate();
+
+        return { updateSource, updateListener, resize };
+      }
+
+      function buildSourceRows() {
+        const root = $('sources');
+        root.innerHTML = '';
+        for (let i = 0; i < 7; i += 1) {
+          const row = document.createElement('div');
+          row.className = 'sp-row';
+          const label = document.createElement('span');
+          label.textContent = String(i + 1);
+          row.appendChild(label);
+          const x = document.createElement('input'); x.type = 'range'; x.min = '-5'; x.max = '5'; x.step = '0.01';
+          const y = document.createElement('input'); y.type = 'range'; y.min = '-3'; y.max = '3'; y.step = '0.01';
+          const z = document.createElement('input'); z.type = 'range'; z.min = '-10'; z.max = '0'; z.step = '0.01';
+          const g = document.createElement('input'); g.type = 'range'; g.min = '0'; g.max = '2'; g.step = '0.01'; g.value = '1';
+          const solo = document.createElement('input'); solo.type = 'checkbox';
+          // sensible defaults so the canvas shows markers immediately
+          x.value = String((i - 3) * 0.8);
+          y.value = '0';
+          z.value = String(-3 - i * 0.3);
+          const apply = () => { if (spatial) spatial.setSource(i, { x: parseFloat(x.value), y: parseFloat(y.value), z: parseFloat(z.value), gain: parseFloat(g.value), solo: !!solo.checked }); };
+          [x,y,z,g].forEach(el => el.addEventListener('input', apply));
+          solo.addEventListener('change', apply);
+          row.appendChild(x); row.appendChild(y); row.appendChild(z); row.appendChild(g); row.appendChild(solo);
+          root.appendChild(row);
+        }
+      }
+
+      function hookGlobals() {
+        const ids = ['refDistance','rolloffFactor','maxDistance','coneInner','coneOuter','coneOuterGain'];
+        ids.forEach((id) => {
+          const el = $(id);
+          if (!el) return;
+          el.addEventListener('input', () => {
+            if (!spatial) return;
+            const params = {};
+            params[id === 'coneInner' ? 'coneInner' : id] = parseFloat(el.value);
+            spatial.setGlobal(params);
+          });
+        });
+        $('bypass').addEventListener('change', (e) => {
+          if (!spatial) return;
+          spatial.setBypass(!!e.target.checked);
+        });
+        // listener controls
+        const lid = ['listenerX','listenerY','listenerZ','listenerYaw','listenerPitch'];
+        const updateListener = () => {
+          const pose = getListenerPose();
+          try {
+            const ctx = window.opener && window.opener._mixerApi ? window.opener._mixerApi.getContext() : null;
+            if (ctx && ctx.listener) {
+              const L = ctx.listener;
+              const t = ctx.currentTime || 0;
+              if (L.positionX) { L.positionX.setTargetAtTime(pose.position.x, t, 0.02); L.positionY.setTargetAtTime(pose.position.y, t, 0.02); L.positionZ.setTargetAtTime(pose.position.z, t, 0.02); }
+              else if (L.setPosition) { L.setPosition(pose.position.x, pose.position.y, pose.position.z); }
+              if (L.forwardX && L.upX) {
+                L.forwardX.setTargetAtTime(pose.forward.x, t, 0.02);
+                L.forwardY.setTargetAtTime(pose.forward.y, t, 0.02);
+                L.forwardZ.setTargetAtTime(pose.forward.z, t, 0.02);
+                L.upX.setTargetAtTime(0, t, 0.02);
+                L.upY.setTargetAtTime(1, t, 0.02);
+                L.upZ.setTargetAtTime(0, t, 0.02);
+              } else if (L.setOrientation) {
+                L.setOrientation(pose.forward.x, pose.forward.y, pose.forward.z, 0, 1, 0);
+              }
+            }
+          } catch (_) {}
+          // Update 3D viz
+          try { if (viz) viz.updateListener(pose); } catch (_) {}
+        };
+        lid.forEach((id) => { const el = $(id); if (el) el.addEventListener('input', updateListener); });
+      }
+
+      function updateBypassUI() {
+        const bypass = $('bypass').checked;
+        if (!spatial) return;
+        spatial.setBypass(bypass);
+        try {
+          if (window.opener && window.opener._mixerApi && typeof window.opener._mixerApi.muteMainStereo === 'function') {
+            window.opener._mixerApi.muteMainStereo(!bypass);
+          }
+        } catch (_) {}
+      }
+
+      async function initSpatial() {
+        // Reuse main page context via window._mixerApi without separate start button
+        const initOnce = async () => {
+          try {
+            if (window.opener && window.opener._mixerApi && !spatial) {
+              context = window.opener._mixerApi.getContext();
+              const resNode = window.opener._mixerApi.getNode();
+              const master = window.opener._mixerApi.getMasterOut();
+              spatial = await SpatialNode.create(context, resNode, master);
+              spatial.setMeterSink((rms) => {
+                const bars = Array.from(document.querySelectorAll('#meters .sp-meter > div'));
+                for (let i = 0; i < 7; i += 1) {
+                  const db = 20 * Math.log10(Math.max(1e-6, rms[i]));
+                  const pct = Math.max(0, Math.min(1, (db + 60) / 60));
+                  bars[i].style.height = String(Math.round(pct * 100)) + '%';
+                }
+              });
+              // Default: engage spatial path (not bypass), mute main stereo
+              $('bypass').checked = false;
+              updateBypassUI();
+
+              // Hook into setSource to mirror changes into the 3D view
+              try {
+                const origSetSource = spatial.setSource.bind(spatial);
+                spatial.setSource = (idx, params) => {
+                  origSetSource(idx, params);
+                  try { if (viz) viz.updateSource(idx, spatial.sources[idx]); } catch (_) {}
+                };
+              } catch (_) {}
+
+              // Initialize 3D with current sources and listener
+              try {
+                for (let i = 0; i < 7; i += 1) {
+                  if (viz) viz.updateSource(i, spatial.sources[i]);
+                }
+                const pose = getListenerPose();
+                if (viz) viz.updateListener(pose);
+              } catch (_) {}
+            }
+          } catch (_) {}
+        };
+        await initOnce();
+        // If main page not started yet, poll until it is
+        if (!spatial) {
+          const iv = setInterval(async () => {
+            if (window.opener && window.opener._mixerApi && !spatial) {
+              clearInterval(iv);
+              await initOnce();
+            }
+          }, 500);
+        }
+      }
+
+      $('openBtn').addEventListener('click', () => {
+        // No-op for same tab; exists for parity with other pages
+      });
+      $('randBtn').addEventListener('click', () => { if (spatial) spatial.randomizePositions(); });
+      $('bypass').addEventListener('change', updateBypassUI);
+
+      buildSourceRows();
+      hookGlobals();
+      // Build 3D viz
+      try { viz = createViz(document.getElementById('spViewport')); } catch (_) {}
+      // Try to initialize immediately using main window's AudioContext
+      initSpatial();
+    </script>
+  </body>
+</html>
+
+
