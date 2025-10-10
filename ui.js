@@ -254,7 +254,7 @@ const RANDOMIZER_STORAGE_KEY = 'randomizerConfigV1';
 
 // Describe randomizable parameters across Main, Exciter, and Mixer
 // kind: 'float' | 'int' | 'bool' | 'select' | 'special'
-// For 'select', provide options array; for 'special' we handle explicitly (e.g., mixer noise LP)
+// For 'select', provide options array
 const RANDOM_PARAMS = [
   // Main panel
   { id: 'rmix', label: 'Mix (rmix)', kind: 'float', min: 0, max: 1, step: 0.001 },
@@ -287,9 +287,7 @@ const RANDOM_PARAMS = [
   { id: 'rainDurMs', label: 'Drop Duration (ms)', kind: 'int', min: 1, max: 200, step: 1 },
   { id: 'rainSpread', label: 'Spread', kind: 'float', min: 0, max: 1, step: 0.01 },
   { id: 'rainCenter', label: 'Center', kind: 'float', min: 0, max: 1, step: 0.01 },
-  { id: 'rainLimbs', label: 'N Limbs', kind: 'int', min: 1, max: 10, step: 1 },
-  // Mixer (noise low-pass cutoff)
-  { id: 'noiseLP', label: 'Mixer Noise LP (Hz)', kind: 'int', min: 50, max: 20000, step: 1 }
+  { id: 'rainLimbs', label: 'N Limbs', kind: 'int', min: 1, max: 10, step: 1 }
 ];
 
 function loadRandomizerConfig() {
@@ -374,8 +372,7 @@ function buildRandomizerPanel() {
 
   const groups = [
     { title: 'Main', ids: ['rmix','nbranches','freqScale','octaves','freqCenter','decayScale','groupEnabled','groupSplit','scaleRoot','scaleName'] },
-    { title: 'Exciter', ids: ['noiseLevel','noiseType','lfoEnabled','lfoRate','lfoDepth','lfoWave','exciterCutoff','exciterHP','exciterBandQNoise','exciterBandQRain','monitorExciter','rainEnabled','rainGain','rainRate','rainDurMs','rainSpread','rainCenter','rainLimbs'] },
-    { title: 'Mixer', ids: ['noiseLP'] }
+    { title: 'Exciter', ids: ['noiseLevel','noiseType','lfoEnabled','lfoRate','lfoDepth','lfoWave','exciterCutoff','exciterHP','exciterBandQNoise','exciterBandQRain','monitorExciter','rainEnabled','rainGain','rainRate','rainDurMs','rainSpread','rainCenter','rainLimbs'] }
   ];
 
   root.innerHTML = '';
@@ -545,23 +542,10 @@ function applyRandomizer() {
     const tOut = tNorm + (pole - tNorm) * influence;
     planned[targetId] = (tgtMeta.kind === 'bool') ? (tOut >= 0.5) : (tgtMeta.kind === 'int' ? Math.round(denormalizeLinear(tOut, tMin, tMax)) : denormalizeLinear(tOut, tMin, tMax));
   }
-  // Apply to DOM/audio for all except Mixer special
+  // Apply to DOM/audio for all
   const entries = Object.entries(planned);
   for (const [id, value] of entries) {
-    if (id === 'noiseLP') continue;
     applyControlFromRemote(id, value);
-  }
-  // Apply mixer noise LP via mixer API if available, and broadcast update to mixer tab
-  if (planned.noiseLP != null) {
-    if (window._mixerApi && typeof window._mixerApi.setNoiseLP === 'function') {
-      try { window._mixerApi.setNoiseLP(planned.noiseLP); } catch (_) {}
-    }
-    try {
-      if (typeof BroadcastChannel !== 'undefined') {
-        const mix = new BroadcastChannel('mixer');
-        mix.postMessage({ type: 'setNoiseLP', value: planned.noiseLP });
-      }
-    } catch (_) {}
   }
   // Broadcast new exciter control values to controller tabs so their UI updates
   try {
@@ -740,19 +724,37 @@ async function startAudio() {
   node = await ResonatorNode.create(context);
   const masterOut = context.createGain();
   masterOut.gain.value = 1;
-  masterOut.connect(context.destination);
+  // Master bus: glue compressor -> makeup gain -> destination
+  const glueComp = context.createDynamicsCompressor();
+  // Sensible defaults for a gentle "glue"
+  glueComp.threshold.value = -30; // dB
+  glueComp.knee.value = 12; // dB
+  glueComp.ratio.value = 2; // :1
+  glueComp.attack.value = 0.01; // s
+  glueComp.release.value = 0.25; // s
+  const masterMakeup = context.createGain();
+  masterMakeup.gain.value = 1.51;
+  let _compBypass = false;
+  function reconnectMaster() {
+    try { masterOut.disconnect(); } catch(_) {}
+    try { glueComp.disconnect(); } catch(_) {}
+    try { masterMakeup.disconnect(); } catch(_) {}
+    if (_compBypass) {
+      masterOut.connect(context.destination);
+    } else {
+      masterOut.connect(glueComp);
+      glueComp.connect(masterMakeup);
+      masterMakeup.connect(context.destination);
+    }
+  }
+  reconnectMaster();
   // Route dual outputs through per-path processing (noise path includes optional LPF)
   const noiseGain = context.createGain();
   noiseGain.gain.value = 1;
   const rainGain = context.createGain();
   rainGain.gain.value = 1;
-  // Optional LPF for continuous noise path (disabled by default)
-  const noiseLPF = context.createBiquadFilter();
-  noiseLPF.type = 'lowpass';
-  noiseLPF.frequency.value = 20000; // wide open initially
-  // Connect output 0 (noise path) via LPF -> gain; output 1 (rain) direct -> gain
-  node.connect(noiseLPF, 0, 0);
-  noiseLPF.connect(noiseGain);
+  // Connect output 0 (noise path) direct -> gain; output 1 (rain) direct -> gain
+  node.connect(noiseGain, 0, 0);
   node.connect(rainGain, 1, 0);
   noiseGain.connect(masterOut);
   rainGain.connect(masterOut);
@@ -792,10 +794,34 @@ async function startAudio() {
   let _origNoiseGain = 1;
   let _origRainGain = 1;
   window._mixerApi = {
-    setNoiseLP(cutoffHz) {
-      noiseLPF.frequency.setTargetAtTime(Math.max(50, Math.min(20000, cutoffHz || 20000)), context.currentTime, 0.02);
+    // Compressor controls
+    setCompressorParams(params) {
+      const p = params || {};
+      if (typeof p.thresholdDb === 'number') glueComp.threshold.setTargetAtTime(p.thresholdDb, context.currentTime, 0.01);
+      if (typeof p.kneeDb === 'number') glueComp.knee.setTargetAtTime(Math.max(0, Math.min(40, p.kneeDb)), context.currentTime, 0.01);
+      if (typeof p.ratio === 'number') glueComp.ratio.setTargetAtTime(Math.max(1, Math.min(20, p.ratio)), context.currentTime, 0.01);
+      if (typeof p.attack === 'number') glueComp.attack.setTargetAtTime(Math.max(0.001, Math.min(1, p.attack)), context.currentTime, 0.01);
+      if (typeof p.release === 'number') glueComp.release.setTargetAtTime(Math.max(0.01, Math.min(2, p.release)), context.currentTime, 0.01);
     },
-    getNoiseLP: () => noiseLPF.frequency.value,
+    getCompressorParams() {
+      return {
+        thresholdDb: glueComp.threshold.value,
+        kneeDb: glueComp.knee.value,
+        ratio: glueComp.ratio.value,
+        attack: glueComp.attack.value,
+        release: glueComp.release.value
+      };
+    },
+    setMakeupGain(g) {
+      const v = (typeof g === 'number') ? Math.max(0, Math.min(4, g)) : 1;
+      masterMakeup.gain.setTargetAtTime(v, context.currentTime, 0.01);
+    },
+    getMakeupGain() { return masterMakeup.gain.value; },
+    setCompressorBypass(enabled) {
+      _compBypass = !!enabled;
+      reconnectMaster();
+    },
+    getCompressorBypass() { return _compBypass; },
     getContext: () => context,
     getNode: () => node,
     getMasterOut: () => masterOut,
@@ -867,18 +893,7 @@ async function startAudio() {
     });
   });
 
-  // Listen to BroadcastChannel messages from mixer to set noise LP directly if provided
-  if (typeof BroadcastChannel !== 'undefined') {
-    const mix = new BroadcastChannel('mixer');
-    mix.onmessage = (event) => {
-      const data = event.data || {};
-      if (data.type === 'setNoiseLP') {
-        if (typeof data.value === 'number') {
-          try { noiseLPF.frequency.setTargetAtTime(Math.max(50, Math.min(20000, data.value)), context.currentTime, 0.02); } catch(_) {}
-        }
-      }
-    };
-  }
+  // Mixer cross-tab channel no longer adjusts LPF; reserved for future messages
   const groupEnableEl = document.getElementById('groupEnabled');
   if (groupEnableEl) {
     groupEnableEl.addEventListener('change', () => {
