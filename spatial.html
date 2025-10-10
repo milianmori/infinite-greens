@@ -59,10 +59,8 @@
           <label>Decay Time (s) <input id="rvDecay" type="range" min="0.2" max="6" step="0.01" value="1.5"></label>
           <label>Gain (+dB) <input id="rvGainDb" type="range" min="0" max="12" step="0.1" value="0"></label>
           <label>HF Damping (Hz) <input id="rvHf" type="range" min="500" max="20000" step="1" value="6000"></label>
-          <div style="margin-top: 0.5rem;">
-            <label><input id="rvExcl6" type="checkbox"> Exclude 6 from reverb</label>
-            <label style="margin-left: 0.75rem;"><input id="rvExcl7" type="checkbox"> Exclude 7 from reverb</label>
-          </div>
+          <label>Send 6 <input id="rvScale6" type="range" min="0" max="1" step="0.01" value="1"></label>
+          <label>Send 7 <input id="rvScale7" type="range" min="0" max="1" step="0.01" value="1"></label>
         </div>
         <div class="sp-card">
           <h3>Listener</h3>
@@ -349,11 +347,11 @@
         bindRv('rvDecay', 'decayTime');
         bindRv('rvGainDb', 'gainDb');
         bindRv('rvHf', 'hfDampHz');
-        // Reverb exclusions for sources 6 and 7 (indices 5 and 6)
-        const excl6 = $('rvExcl6');
-        const excl7 = $('rvExcl7');
-        if (excl6) excl6.addEventListener('change', () => { try { if (spatial) spatial.setReverbExclude(5, !!excl6.checked); } catch (_) {} });
-        if (excl7) excl7.addEventListener('change', () => { try { if (spatial) spatial.setReverbExclude(6, !!excl7.checked); } catch (_) {} });
+        // Reverb send scaling for sources 6 and 7 (indices 5 and 6)
+        const s6 = $('rvScale6');
+        const s7 = $('rvScale7');
+        if (s6) s6.addEventListener('input', () => { try { if (spatial) spatial.setReverbScale(5, parseFloat(s6.value)); } catch (_) {} });
+        if (s7) s7.addEventListener('input', () => { try { if (spatial) spatial.setReverbScale(6, parseFloat(s7.value)); } catch (_) {} });
         // listener controls
         const lid = ['listenerX','listenerY','listenerZ','listenerYaw','listenerPitch'];
         let isApplyingAutomation = false;
@@ -499,6 +497,7 @@
           if (!lastTs) lastTs = ts;
           const dt = Math.min(0.1, Math.max(0, (ts - lastTs) / 1000));
           lastTs = ts;
+          const oldPos = { x: curPos.x, y: curPos.y, z: curPos.z };
 
           if (dwellLeft > 0) {
             dwellLeft -= dt;
@@ -519,17 +518,20 @@
           curPos.y += (target.y - curPos.y) * alpha;
           curPos.z += (target.z - curPos.z) * alpha;
 
-          // Auto-yaw toward motion direction
+          // Auto-yaw toward actual movement direction (instantaneous velocity)
           if (auto.yawEnabled) {
-            const dirX = b.x - curPos.x;
-            const dirZ = b.z - curPos.z;
-            const desiredYaw = Math.atan2(dirX, -dirZ);
-            let dYaw = desiredYaw - curYaw;
-            while (dYaw > Math.PI) dYaw -= 2 * Math.PI;
-            while (dYaw < -Math.PI) dYaw += 2 * Math.PI;
-            const maxStep = Math.max(0, auto.yawRateDeg) * Math.PI / 180 * dt;
-            if (dYaw > maxStep) dYaw = maxStep; else if (dYaw < -maxStep) dYaw = -maxStep;
-            curYaw += dYaw;
+            const moveX = curPos.x - oldPos.x;
+            const moveZ = curPos.z - oldPos.z;
+            const moveLenSq = moveX * moveX + moveZ * moveZ;
+            if (moveLenSq > 1e-8) {
+              const desiredYaw = Math.atan2(moveX, -moveZ);
+              let dYaw = desiredYaw - curYaw;
+              while (dYaw > Math.PI) dYaw -= 2 * Math.PI;
+              while (dYaw < -Math.PI) dYaw += 2 * Math.PI;
+              const maxStep = Math.max(0, auto.yawRateDeg) * Math.PI / 180 * dt;
+              if (dYaw > maxStep) dYaw = maxStep; else if (dYaw < -maxStep) dYaw = -maxStep;
+              curYaw += dYaw;
+            }
           }
 
           segElapsed += dt;
@@ -570,6 +572,18 @@
         bindChk('autoYaw', 'yawEnabled');
         bindNum('autoYawRate', 'yawRateDeg');
 
+        // Ensure internal state matches current UI without requiring user toggles
+        function syncAutoFromUI() {
+          try {
+            auto.enabled = !!($('autoMove') && $('autoMove').checked);
+            auto.speed = parseFloat((($('autoSpeed') || { value: String(auto.speed) }).value));
+            auto.approach = parseFloat((($('autoApproach') || { value: String(auto.approach) }).value));
+            auto.dwell = parseFloat((($('autoDwell') || { value: String(auto.dwell) }).value));
+            auto.yawEnabled = !!($('autoYaw') && $('autoYaw').checked);
+            auto.yawRateDeg = parseFloat((($('autoYawRate') || { value: String(auto.yawRateDeg) }).value));
+          } catch (_) {}
+        }
+
         // Ensure yaw spin follows toggle state when Auto-Move is off
         const autoYawEl = $('autoYaw');
         if (autoYawEl) autoYawEl.addEventListener('change', () => {
@@ -592,9 +606,10 @@
           }
         } catch (_) {}
 
-        // Start/stop based on toggle initial state
-        if ($('autoMove').checked) startAutoMove();
-        else if ($('autoYaw').checked) startYawSpin();
+        // Start/stop based on toggle initial state (after syncing)
+        syncAutoFromUI();
+        if (auto.enabled) startAutoMove();
+        else if (auto.yawEnabled) startYawSpin();
       }
 
       function updateBypassUI() {
@@ -635,9 +650,9 @@
                 const gainDb = parseFloat(($('rvGainDb') || { value: '0' }).value);
                 const hf = parseFloat(($('rvHf') || { value: '6000' }).value);
                 spatial.setReverbParams({ wet, decayTime: decay, gainDb, hfDampHz: hf });
-                // Apply initial exclusions
-                try { spatial.setReverbExclude(5, !!(($('rvExcl6') || { checked: false }).checked)); } catch (_) {}
-                try { spatial.setReverbExclude(6, !!(($('rvExcl7') || { checked: false }).checked)); } catch (_) {}
+                // Apply initial send scales
+                try { spatial.setReverbScale(5, parseFloat((($('rvScale6') || { value: '1' }).value))); } catch (_) {}
+                try { spatial.setReverbScale(6, parseFloat((($('rvScale7') || { value: '1' }).value))); } catch (_) {}
               } catch (_) {}
               // Default: engage spatial path (not bypass), mute main stereo
               $('bypass').checked = false;

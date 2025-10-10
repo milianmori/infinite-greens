@@ -49,6 +49,9 @@ export class SpatialNode {
     // Reverb exclusion per source (true => exclude from reverb send)
     this.reverbExclude = new Array(7).fill(false);
 
+    // Per-source reverb scaling (multiplier on computed send amount)
+    this.reverbScale = new Array(7).fill(1);
+
     this._buildGraph();
   }
 
@@ -247,7 +250,7 @@ export class SpatialNode {
       if (norm < 0) norm = 0; else if (norm > 1) norm = 1;
       // Slight emphasis on far distances, preserve source gain
       let sendAmt = Math.pow(norm, 0.7) * Math.max(0, s.gain);
-      if (this.reverbExclude[i]) sendAmt = 0;
+      if (this.reverbExclude[i]) sendAmt = 0; else sendAmt *= Math.max(0, (this.reverbScale && this.reverbScale[i] != null) ? this.reverbScale[i] : 1);
       try { this.reverbSends[i].gain.setTargetAtTime(sendAmt, t, 0.05); } catch (_) { this.reverbSends[i].gain.value = sendAmt; }
     }
   }
@@ -256,6 +259,15 @@ export class SpatialNode {
     const i = index | 0;
     if (i < 0 || i >= 7) return;
     this.reverbExclude[i] = !!excluded;
+    this._updateReverbSends();
+  }
+
+  setReverbScale(index, scale) {
+    const i = index | 0;
+    if (i < 0 || i >= 7) return;
+    const v = Number(scale);
+    // clamp to [0, 2] for safety
+    this.reverbScale[i] = (isFinite(v) ? Math.max(0, Math.min(2, v)) : 1);
     this._updateReverbSends();
   }
 

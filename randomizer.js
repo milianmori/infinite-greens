@@ -23,6 +23,18 @@ if (floatingRandomizeBtn) {
         window.opener.document.getElementById('randomizeBtn')?.click();
       } catch (_) {}
     }
+    // Also notify spatial window to randomize positions (use radius from main if present)
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        const sp = new BroadcastChannel('spatial');
+        let radius = null;
+        try {
+          const el = window.opener && !window.opener.closed ? window.opener.document.getElementById('randMaxDist') : null;
+          if (el) radius = parseFloat(el.value);
+        } catch (_) {}
+        sp.postMessage({ type: 'randomizePositions', radius });
+      }
+    } catch (_) {}
   });
 }
 
