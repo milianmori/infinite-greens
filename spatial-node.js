@@ -4,7 +4,8 @@
 export class SpatialNode {
   static async create(context, resonatorNode, destination) {
     try {
-      await context.audioWorklet.addModule('spatial-processor.js');
+      const url = new URL('./worklets/spatial-processor.min.js?worker', import.meta.url).href;
+      await context.audioWorklet.addModule(url);
     } catch (_) {}
     return new SpatialNode(context, resonatorNode, destination);
   }

@@ -5,7 +5,8 @@ export class ResonatorNode extends AudioWorkletNode {
   static async create(context) {
     // Ensure the processor module is loaded; ignore error if already loaded
     try {
-      await context.audioWorklet.addModule('resonator-processor.js');
+      const url = new URL('./worklets/resonator-processor.min.js?worker', import.meta.url).href;
+      await context.audioWorklet.addModule(url);
     } catch (_) {
       // no-op
     }

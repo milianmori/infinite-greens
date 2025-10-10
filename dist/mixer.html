@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mixer</title>
+    <link rel="stylesheet" crossorigin href="/assets/styles-CFWsLmHp.css">
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Mixer</h1>
+      </header>
+      <section class="mixer">
+        <div class="card">
+          <h3>Master Meters</h3>
+          <div class="hflex">
+            <div class="meter"><div id="meter0Bar" class="bar"></div></div>
+            <div class="meter"><div id="meter1Bar" class="bar"></div></div>
+            <div class="meter" title="Gain Reduction"><div id="grBar" class="bar" style="background:#ef4444"></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Glue Compressor</h3>
+          <div class="grid" style="grid-template-columns: 160px 1fr; gap: 8px; align-items: center;">
+            <label for="compBypass">Bypass</label>
+            <input id="compBypass" type="checkbox" />
+
+            <label for="compThreshold">Threshold (dB) <span id="compThresholdVal"></span></label>
+            <input id="compThreshold" type="range" min="-60" max="0" step="1" />
+
+            <label for="compKnee">Knee (dB) <span id="compKneeVal"></span></label>
+            <input id="compKnee" type="range" min="0" max="40" step="1" />
+
+            <label for="compRatio">Ratio <span id="compRatioVal"></span></label>
+            <input id="compRatio" type="range" min="1" max="20" step="0.1" />
+
+            <label for="compAttack">Attack (s) <span id="compAttackVal"></span></label>
+            <input id="compAttack" type="range" min="0.001" max="1" step="0.001" />
+
+            <label for="compRelease">Release (s) <span id="compReleaseVal"></span></label>
+            <input id="compRelease" type="range" min="0.01" max="2" step="0.01" />
+
+            <label for="makeup">Makeup Gain <span id="makeupVal"></span></label>
+            <input id="makeup" type="range" min="0" max="4" step="0.01" />
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Tips</h3>
+          <div style="font-size:12px;color:#94a3b8">Start audio in the main window first. Adjust the glue compressor to taste; use makeup to recover level.</div>
+        </div>
+      </section>
+    </div>
+<button id="floatingRandomizeBtn" class="floating-randomize">Randomize</button>
+    <script>
+      // Connect controls to main window mixer API via opener or shared window
+      function getMixerApi() {
+        try {
+          if (window.opener && window.opener._mixerApi) return window.opener._mixerApi;
+        } catch (_) {}
+        try {
+          if (window._mixerApi) return window._mixerApi;
+        } catch (_) {}
+        return null;
+      }
+      const api = getMixerApi();
+      function setText(id, val) { const el = document.getElementById(id); if (el) el.textContent = String(val); }
+      function attachCompressorControls() {
+        const a = getMixerApi(); if (!a) return false;
+        const p = a.getCompressorParams();
+        const mk = (id, val) => { const el = document.getElementById(id); if (el) el.value = String(val); };
+        mk('compThreshold', p.thresholdDb);
+        setText('compThresholdVal', Math.round(p.thresholdDb));
+        mk('compKnee', p.kneeDb);
+        setText('compKneeVal', Math.round(p.kneeDb));
+        mk('compRatio', p.ratio);
+        setText('compRatioVal', p.ratio.toFixed(1));
+        mk('compAttack', p.attack);
+        setText('compAttackVal', p.attack.toFixed(3));
+        mk('compRelease', p.release);
+        setText('compReleaseVal', p.release.toFixed(2));
+        mk('makeup', a.getMakeupGain());
+        setText('makeupVal', a.getMakeupGain().toFixed(2));
+        const bp = document.getElementById('compBypass'); if (bp) bp.checked = !!a.getCompressorBypass();
+        return true;
+      }
+      function wireHandlers() {
+        const send = () => {
+          const a = getMixerApi(); if (!a) return;
+          a.setCompressorParams({
+            thresholdDb: parseFloat(document.getElementById('compThreshold').value),
+            kneeDb: parseFloat(document.getElementById('compKnee').value),
+            ratio: parseFloat(document.getElementById('compRatio').value),
+            attack: parseFloat(document.getElementById('compAttack').value),
+            release: parseFloat(document.getElementById('compRelease').value)
+          });
+        };
+        const t = document.getElementById('compThreshold'); if (t) t.addEventListener('input', (e)=>{ setText('compThresholdVal', Math.round(parseFloat(e.target.value))); send(); });
+        const k = document.getElementById('compKnee'); if (k) k.addEventListener('input', (e)=>{ setText('compKneeVal', Math.round(parseFloat(e.target.value))); send(); });
+        const r = document.getElementById('compRatio'); if (r) r.addEventListener('input', (e)=>{ setText('compRatioVal', parseFloat(e.target.value).toFixed(1)); send(); });
+        const aAttack = document.getElementById('compAttack'); if (aAttack) aAttack.addEventListener('input', (e)=>{ setText('compAttackVal', parseFloat(e.target.value).toFixed(3)); send(); });
+        const aRelease = document.getElementById('compRelease'); if (aRelease) aRelease.addEventListener('input', (e)=>{ setText('compReleaseVal', parseFloat(e.target.value).toFixed(2)); send(); });
+        const mu = document.getElementById('makeup'); if (mu) mu.addEventListener('input', (e)=>{ const api = getMixerApi(); if (api) { api.setMakeupGain(parseFloat(e.target.value)); setText('makeupVal', parseFloat(e.target.value).toFixed(2)); } });
+        const bp = document.getElementById('compBypass'); if (bp) bp.addEventListener('change', (e)=>{ const api = getMixerApi(); if (api) api.setCompressorBypass(!!e.target.checked); });
+      }
+      // If main tab not started yet, keep trying to attach API and populate defaults
+      let tries = 0;
+      const retry = () => {
+        if (attachCompressorControls()) { wireHandlers(); return; }
+        tries += 1;
+        if (tries < 100) setTimeout(retry, 300);
+      };
+      retry();
+      // Live meters: mirror per-path RMS (noise/rain) and compressor gain reduction
+      (function meters(){
+        const a = getMixerApi();
+        if (!a) { requestAnimationFrame(meters); return; }
+        try {
+          const ctx = a.getContext();
+          const noise = a.getNoiseGain();
+          const rain = a.getRainGain();
+          const an0 = ctx.createAnalyser(); an0.fftSize = 1024; noise.connect(an0);
+          const an1 = ctx.createAnalyser(); an1.fftSize = 1024; rain.connect(an1);
+          const d0 = new Float32Array(an0.fftSize);
+          const d1 = new Float32Array(an1.fftSize);
+          const el0 = document.getElementById('meter0Bar');
+          const el1 = document.getElementById('meter1Bar');
+          const grEl = document.getElementById('grBar');
+          const update = () => {
+            an0.getFloatTimeDomainData(d0);
+            an1.getFloatTimeDomainData(d1);
+            let s0=0,s1=0; for (let i=0;i<d0.length;i++){ s0+=d0[i]*d0[i]; s1+=d1[i]*d1[i]; }
+            const rms0 = Math.sqrt(s0/d0.length);
+            const rms1 = Math.sqrt(s1/d1.length);
+            const db0 = 20*Math.log10(Math.max(1e-6, rms0));
+            const db1 = 20*Math.log10(Math.max(1e-6, rms1));
+            const pct0 = Math.max(0, Math.min(1, (db0 + 60) / 60));
+            const pct1 = Math.max(0, Math.min(1, (db1 + 60) / 60));
+            if (el0) el0.style.height = Math.round(pct0*100)+'%';
+            if (el1) el1.style.height = Math.round(pct1*100)+'%';
+            // Approximate GR using difference between input (masterOut) and post-comp (makeup) if bypassed off
+            let gr = 0;
+            try {
+              if (!a.getCompressorBypass()) {
+                // Web Audio doesn't expose compressor reduction; show makeup as proxy when comp is working
+                const ratio = a.getCompressorParams().ratio || 1;
+                gr = Math.min(1, Math.max(0, (ratio - 1) / 19));
+              }
+            } catch(_) {}
+            if (grEl) grEl.style.height = Math.round(gr*100)+'%';
+            requestAnimationFrame(update);
+          };
+          requestAnimationFrame(update);
+        } catch(_) { requestAnimationFrame(meters); }
+      })();
+    // Floating Randomize triggers main page randomizer
+    (function(){
+      const floater = document.getElementById('floatingRandomizeBtn');
+      if (!floater) return;
+      floater.addEventListener('click', () => {
+        try {
+          if (window.opener && !window.opener.closed) {
+            window.opener.document.getElementById('randomizeBtn')?.click();
+          }
+        } catch(_) {}
+      });
+    })();
+    </script>
+  </body>
+  </html>
+

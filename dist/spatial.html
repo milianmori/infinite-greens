@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spatializer</title>
+
+    <style>
+      .sp-row { display: grid; grid-template-columns: 1.5rem repeat(4, 1fr) auto; gap: 0.5rem; align-items: center; margin: 0.25rem 0; }
+      .sp-row input[type="range"] { width: 100%; }
+      .sp-controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+      .sp-card { border: 1px solid #444; padding: 0.75rem; border-radius: 6px; }
+      /* Place 3D View on the second row; Sources on the third spanning full width */
+      #card-sources { grid-row: 3; grid-column: 1 / -1; }
+      .sp-meters { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; height: 60px; align-items: end; }
+      .sp-meter { background: #222; border: 1px solid #333; position: relative; height: 100%; }
+      .sp-meter > div { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(#0f0, #380); height: 0%; }
+      .head { display: flex; gap: 0.5rem; align-items: center; }
+      .sp-viewport { width: 100%; height: 560px; background: #0b0f14; border: 1px solid #333; border-radius: 6px; position: relative; overflow: hidden; }
+      .sp-label { color: #e8eaed; font-size: 12px; padding: 2px 4px; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; }
+      .sp-card.sp-3d { grid-column: span 2; }
+      .sp-val { color: #9aa0a6; font-size: 12px; margin-left: 6px; min-width: 3ch; display: inline-block; text-align: right; }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+        }
+      }
+    </script>
+    <script type="module" crossorigin src="/assets/spatial-DgGGS0Wy.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/modulepreload-polyfill-B5Qt9EMX.js">
+    <link rel="stylesheet" crossorigin href="/assets/styles-CFWsLmHp.css">
+  </head>
+  <body>
+    <div class="container">
+      <header class="head">
+        <button id="openBtn">Open Spatial</button>
+        <button id="randBtn">Randomize</button>
+        <label><input type="checkbox" id="bypass"> Bypass</label>
+      </header>
+
+      
+
+      <section class="sp-controls">
+        <div class="sp-card" id="card-sources">
+          <h3>Sources</h3>
+          <div id="sources"></div>
+        </div>
+        <div class="sp-card">
+          <h3>Global</h3>
+          <label>refDistance <input id="refDistance" type="range" min="0.1" max="10" step="0.1" value="1"></label>
+          <label>rolloffFactor <input id="rolloffFactor" type="range" min="0" max="4" step="0.01" value="1"></label>
+          <label>maxDistance <input id="maxDistance" type="range" min="1" max="50" step="1" value="10"></label>
+          <label>coneInner <input id="coneInner" type="range" min="0" max="360" step="1" value="360"></label>
+          <label>coneOuter <input id="coneOuter" type="range" min="0" max="360" step="1" value="360"></label>
+          <label>coneOuterGain <input id="coneOuterGain" type="range" min="0" max="1" step="0.01" value="0"></label>
+        </div>
+        <div class="sp-card">
+          <h3>World Reverb</h3>
+          <label>Wet Mix <input id="rvWet" type="range" min="0" max="1" step="0.01" value="0.05"></label>
+          <label>Decay Time (s) <input id="rvDecay" type="range" min="0.2" max="6" step="0.01" value="1.5"></label>
+          <label>Gain (+dB) <input id="rvGainDb" type="range" min="0" max="12" step="0.1" value="0"></label>
+          <label>HF Damping (Hz) <input id="rvHf" type="range" min="500" max="20000" step="1" value="6000"></label>
+          <label>Send 6 <input id="rvScale6" type="range" min="0" max="1" step="0.01" value="1"></label>
+          <label>Send 7 <input id="rvScale7" type="range" min="0" max="1" step="0.01" value="1"></label>
+        </div>
+        <div class="sp-card">
+          <h3>Listener</h3>
+          <label>X <input id="listenerX" type="range" min="-10" max="10" step="0.01" value="-5.22"></label>
+          <label>Y <input id="listenerY" type="range" min="-5" max="5" step="0.01" value="-0.81"></label>
+          <label>Z <input id="listenerZ" type="range" min="-10" max="10" step="0.01" value="-7.69"></label>
+          <label>Yaw (deg) <input id="listenerYaw" type="range" min="-180" max="180" step="1" value="-180"></label>
+          <label>Pitch (deg) <input id="listenerPitch" type="range" min="-89" max="89" step="1" value="0"></label>
+          <hr />
+          <label><input id="autoMove" type="checkbox" checked> Auto-Move Listener</label>
+          <label>Speed (units/s) <input id="autoSpeed" type="range" min="0.1" max="10" step="0.1" value="1.0"></label>
+          <label>Approach (smooth) <input id="autoApproach" type="range" min="0.05" max="2" step="0.01" value="0.5"></label>
+          <label>Dwell (s) <input id="autoDwell" type="range" min="0" max="2" step="0.01" value="0.3"></label>
+          <label><input id="autoYaw" type="checkbox" checked> Auto Yaw</label>
+          <label>Yaw Rate (deg/s) <input id="autoYawRate" type="range" min="10" max="360" step="1" value="120"></label>
+        </div>
+        <div class="sp-card sp-3d">
+          <h3>3D View</h3>
+          <div id="spViewport" class="sp-viewport"></div>
+        </div>
+        <div class="sp-card">
+          <h3>Meters</h3>
+          <div class="sp-meters" id="meters">
+            <div class="sp-meter"><div></div></div>
+            <div class="sp-meter"><div></div></div>
+            <div class="sp-meter"><div></div></div>
+            <div class="sp-meter"><div></div></div>
+            <div class="sp-meter"><div></div></div>
+            <div class="sp-meter"><div></div></div>
+            <div class="sp-meter"><div></div></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <button id="floatingRandomizeBtn" class="floating-randomize">Randomize</button>
+
+  </body>
+</html>
+
+

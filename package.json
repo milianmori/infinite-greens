@@ -5,16 +5,19 @@
   "main": "index.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run build:worklets && vite build",
+    "build:worklets": "esbuild resonator-processor.js --bundle --format=esm --minify --outfile=worklets/resonator-processor.min.js && esbuild spatial-processor.js --bundle --format=esm --minify --outfile=worklets/spatial-processor.min.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "predeploy": "npm run build",
-    "deploy": "surge ./dist infinite-greens-$(date +%s).surge.sh"
+    "deploy": "surge ./dist infinite-greens.surge.sh",
+    "deploy:prod": "surge ./dist infinite-greens.surge.sh"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
+    "esbuild": "^0.25.10",
     "surge": "^0.24.6",
     "vite": "^7.1.9"
   }
