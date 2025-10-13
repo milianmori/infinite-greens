@@ -48,7 +48,7 @@ function saveJson(key, obj) {
 function readElValue(el, id) {
   if (!el) return undefined;
   if (el.type === 'checkbox') return !!el.checked;
-  return (id === 'nbranches' || id === 'octaves' || id === 'lfoWave' || id === 'noiseType' || id === 'rainLimbs' || id === 'groupSplit')
+  return (id === 'nbranches' || id === 'lfoWave' || id === 'noiseType' || id === 'rainLimbs' || id === 'groupSplit')
     ? parseInt(el.value, 10)
     : (id === 'scaleRoot' || id === 'scaleName') ? String(el.value) : parseFloat(el.value);
 }
@@ -67,7 +67,7 @@ function writeElValue(el, id, value) {
 
 // Main UI ids to persist (present on index.html)
 const MAIN_UI_IDS = [
-  'rmix','nbranches','freqScale','octaves','freqCenter','decayScale',
+  'rmix','nbranches','freqScale','freqCenter','decayScale',
   'groupEnabled','groupSplit','scaleRoot','scaleName'
 ];
 
@@ -504,6 +504,8 @@ function applyRandomizer() {
   order.sort((a, b) => (a.id === 'nbranches' ? -1 : b.id === 'nbranches' ? 1 : 0));
   const planned = {};
   for (const meta of order) {
+    // Skip 'octaves' here; we use it to set per-branch slider bounds
+    if (meta.id === 'octaves') continue;
     const val = randomValueFor(meta, cfg[meta.id]);
     if (val == null) continue;
     planned[meta.id] = val;
@@ -547,6 +549,35 @@ function applyRandomizer() {
   for (const [id, value] of entries) {
     applyControlFromRemote(id, value);
   }
+
+  // Special handling: transpose octave now sets per-branch octave slider min/max
+  try {
+    if (cfg.octaves && cfg.octaves.enabled) {
+      const rows = document.querySelectorAll('#branches .row');
+      const mn = (typeof cfg.octaves.min === 'number') ? Math.round(cfg.octaves.min) : -4;
+      const mx = (typeof cfg.octaves.max === 'number') ? Math.round(cfg.octaves.max) : 4;
+      // Limit randomization to visible branches
+      const nNow = parseInt(document.getElementById('nbranches')?.value || String(rows.length), 10) | 0;
+      rows.forEach((row, idx) => {
+        if (idx >= nNow) return;
+        const octEl = row.querySelector('input[data-role="oct"]');
+        if (!octEl) return;
+        const newMin = String(Math.min(mx, Math.max(-12, mn)));
+        const newMax = String(Math.max(mn, Math.min(12, mx)));
+        octEl.min = newMin;
+        octEl.max = newMax;
+        // Randomize the octave value within the new bounds (inclusive)
+        const minI = parseInt(newMin, 10) | 0;
+        const maxI = parseInt(newMax, 10) | 0;
+        const next = (minI <= maxI)
+          ? (minI + Math.floor(Math.random() * (maxI - minI + 1)))
+          : 0;
+        octEl.value = String(next);
+        // Trigger input so frequency updates if audio is running
+        octEl.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    }
+  } catch (_) {}
   // Broadcast new exciter control values to controller tabs so their UI updates
   try {
     if (bc) {
@@ -579,6 +610,16 @@ function buildBranchRow(i) {
   freq.dataset.role = 'freq';
   row.appendChild(freq);
 
+  // Per-branch octave transpose (integer)
+  const oct = document.createElement('input');
+  oct.type = 'number';
+  oct.min = '-4';
+  oct.max = '4';
+  oct.step = '1';
+  oct.value = '0';
+  oct.dataset.role = 'oct';
+  row.appendChild(oct);
+
   const decay = document.createElement('input');
   decay.type = 'range';
   decay.min = '50';
@@ -609,7 +650,7 @@ function buildBranchRow(i) {
   const onInput = () => {
     if (!node) return;
     const params = {
-      freq: normToHz(parseFloat(freq.value)),
+      freq: normToHz(parseFloat(freq.value)) * Math.pow(2, parseInt(oct.value || '0', 10)),
       decay: parseFloat(decay.value),
       amp: parseFloat(amp.value),
       pan: parseFloat(pan.value)
@@ -618,6 +659,7 @@ function buildBranchRow(i) {
   };
 
   freq.addEventListener('input', onInput);
+  oct.addEventListener('input', onInput);
   decay.addEventListener('input', onInput);
   amp.addEventListener('input', onInput);
   pan.addEventListener('input', onInput);
@@ -637,10 +679,13 @@ function randomize(count) {
   const rows = document.querySelectorAll('#branches .row');
   for (let i = 0; i < count; i += 1) {
     const freq = Math.round(randRange(100, 2000));
+    // Respect per-branch octave when randomizing
+    const octEl = rows[i] && rows[i].querySelector('input[data-role="oct"]');
+    const oct = octEl ? parseInt(octEl.value || '0', 10) : 0;
     const decay = Math.round(randRange(100, 800));
     const amp = round2(randRange(0.005, 0.05));
     const pan = randRange(-1, 1);
-    branches.push({ freq, decay, amp, pan });
+    branches.push({ freq: freq * Math.pow(2, oct), decay, amp, pan });
 
     const row = rows[i];
     row.querySelector('input[data-role="freq"]').value = String(hzToNorm(freq));
@@ -657,6 +702,8 @@ function randomizeBranchRange(startIndex, endIndex) {
   const end = Math.min(MAX, endIndex | 0);
   for (let i = start; i < end; i += 1) {
     const freq = Math.round(randRange(100, 2000));
+    const octEl = rows[i] && rows[i].querySelector('input[data-role="oct"]');
+    const oct = octEl ? parseInt(octEl.value || '0', 10) : 0;
     const decay = Math.round(randRange(100, 800));
     const amp = round2(randRange(0.005, 0.05));
     const pan = randRange(-1, 1);
@@ -670,7 +717,7 @@ function randomizeBranchRange(startIndex, endIndex) {
     if (decayEl) decayEl.value = String(decay);
     if (ampEl) ampEl.value = String(amp);
     if (panEl) panEl.value = String(pan);
-    if (node) node.setBranchParams(i, { freq, decay, amp, pan });
+    if (node) node.setBranchParams(i, { freq: freq * Math.pow(2, oct), decay, amp, pan });
   }
 }
 
@@ -697,7 +744,6 @@ function updateValueLabels() {
   get('rmixVal').textContent = Number(get('rmix').value).toFixed(2);
   get('nbranchesVal').textContent = get('nbranches').value;
   get('freqScaleVal').textContent = Number(get('freqScale').value).toFixed(2);
-  if (get('octaves')) get('octavesVal').textContent = String(parseInt(get('octaves').value, 10));
   if (get('burstRate')) get('burstRateVal').textContent = Number(get('burstRate').value).toFixed(2);
   if (get('burstDurMs')) get('burstDurMsVal').textContent = get('burstDurMs').value;
   if (get('impulseGain')) get('impulseGainVal').textContent = Number(get('impulseGain').value).toFixed(2);
@@ -843,7 +889,7 @@ async function startAudio() {
 
   // Wire global sliders
   const $ = (id) => document.getElementById(id);
-  const sliders = ['rmix', 'nbranches', 'freqScale', 'octaves', 'freqCenter', 'decayScale', 'groupSplit'];
+  const sliders = ['rmix', 'nbranches', 'freqScale', 'freqCenter', 'decayScale', 'groupSplit'];
   // Exciter controls may live in a separate tab now; guard for missing elements
   const optional = ['noiseType', 'lfoRate', 'lfoDepth', 'exciterCutoff', 'exciterHP', 'exciterBandQNoise', 'exciterBandQRain', 'rainRate', 'rainDurMs', 'rainGain', 'rainSpread', 'rainCenter', 'rainLimbs'];
   for (const id of optional) { if (document.getElementById(id)) sliders.push(id); }
@@ -853,7 +899,7 @@ async function startAudio() {
     el.addEventListener('input', () => {
       updateValueLabels();
       // persist main UI slider value
-      saveMainUIPartial({ [id]: (el.type === 'checkbox') ? !!el.checked : (id === 'nbranches' || id === 'octaves' || id === 'groupSplit') ? parseInt(el.value, 10) : parseFloat(el.value) });
+      saveMainUIPartial({ [id]: (el.type === 'checkbox') ? !!el.checked : (id === 'nbranches' || id === 'groupSplit') ? parseInt(el.value, 10) : parseFloat(el.value) });
       if (!node) return;
       const t = context.currentTime;
       switch (id) {
@@ -878,7 +924,6 @@ async function startAudio() {
           break;
         }
         case 'freqScale': node.freqScale.setValueAtTime(parseFloat(el.value), t); break;
-        case 'octaves': node.octaves.setValueAtTime(parseInt(el.value, 10), t); break;
         case 'exciterCutoff': node.exciterCutoff.setValueAtTime(parseFloat(el.value), t); break;
         case 'exciterHP': node.exciterHP.setValueAtTime(parseFloat(el.value), t); break;
         case 'burstRate': node.burstRate.setValueAtTime(parseFloat(el.value), t); break;
@@ -1030,7 +1075,6 @@ if (resetBtnEl) resetBtnEl.addEventListener('click', () => {
   document.getElementById('rmix').value = '1';
   document.getElementById('nbranches').value = '4';
   document.getElementById('freqScale').value = '1';
-  document.getElementById('octaves').value = '0';
   if (document.getElementById('exciterCutoff')) document.getElementById('exciterCutoff').value = '4000';
   if (document.getElementById('exciterHP')) document.getElementById('exciterHP').value = '50';
   if (document.getElementById('noiseType')) document.getElementById('noiseType').value = '0';
@@ -1070,7 +1114,6 @@ if (resetBtnEl) resetBtnEl.addEventListener('click', () => {
     node.rmix.setValueAtTime(1, t);
     node.nbranches.setValueAtTime(4, t);
     node.freqScale.setValueAtTime(1, t);
-    node.octaves.setValueAtTime(0, t);
     if (node.exciterCutoff) node.exciterCutoff.setValueAtTime(4000, t);
     if (node.exciterHP) node.exciterHP.setValueAtTime(50, t);
     if (node.rainEnabled) node.rainEnabled.setValueAtTime(1, t);
